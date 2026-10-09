@@ -80,6 +80,7 @@
   .when { color: var(--accent); font-weight: 700; font-size: 14px; }
   .card h3 { margin: 0; font-size: 1.05rem; line-height: 1.25; }
   .price { font-size: 14px; font-weight: 600; }
+  .unknown { color: var(--muted); font-weight: 400; font-style: italic; }
   .ntaflof { align-self: flex-start; font-size: 12px; font-weight: 600; color: #a8f0c6; border: 1px solid color-mix(in srgb, #a8f0c6 50%, transparent);
              border-radius: var(--control-radius); padding: 2px 7px; }
   .desc { margin: 0; font-size: 14px; }
@@ -393,6 +394,12 @@
       '<span class="sr-only"> (opens in new tab)</span></a>';
   }
 
+  // Blank or "Unknown" in the sheet: say so quietly rather than guessing "Free".
+  function priceText(e) {
+    const p = String(e.price || '').trim();
+    return !p || /^unknown$/i.test(p) ? '<span class="unknown">Price unknown</span>' : esc(p);
+  }
+
   function tagHtml(e) {
     return '<button class="tag" type="button" data-tag="' + esc(e.type) + '" style="--c:' + typeColor(e.type) + '"' +
       ' aria-pressed="' + (state.type === e.type) + '" aria-label="Show only ' + esc(e.type) + ' events">' +
@@ -419,7 +426,7 @@
       (e.time ? '<div class="when">' + esc(e.time) + '</div>' : '') +
       '<h3>' + esc(e.name) + '</h3>' +
       (meta ? '<div class="meta">' + meta + '</div>' : '') +
-      '<div class="price"><span aria-hidden="true">🎟 </span>' + esc(e.price || 'Free') + '</div>' +
+      '<div class="price"><span aria-hidden="true">🎟 </span>' + priceText(e) + '</div>' +
       (e.ntaflof ? '<div class="ntaflof">No one turned away for lack of funds</div>' : '') +
       (e.description ? '<p class="desc">' + esc(e.description) + '</p>' : '') +
       (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') +
@@ -437,7 +444,7 @@
         (e.venue ? '<div class="sub">' + esc(e.venue) + '</div>' : '') +
         (e.description ? '<div class="sub one">' + esc(e.description) + '</div>' : '') + '</td>' +
       '<td class="c-type">' + tagHtml(e) + '</td>' +
-      '<td class="c-price">' + esc(e.price || 'Free') + (e.ntaflof ? '<div class="sub ok">No one turned away</div>' : '') + '</td>' +
+      '<td class="c-price">' + priceText(e) + (e.ntaflof ? '<div class="sub ok">No one turned away</div>' : '') + '</td>' +
       '<td class="c-src">' + (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') + postLink(e, 'Post') + '</td>' +
       '</tr>';
   }

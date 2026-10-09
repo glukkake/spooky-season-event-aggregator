@@ -171,6 +171,7 @@ function setup() {
   events.getRange(2, C.Time, events.getMaxRows() - 1, 1).setNumberFormat('@');
   events.getRange(2, C.Start, events.getMaxRows() - 1, 1).setNumberFormat('@');
   events.getRange(2, C['Arrive by'], events.getMaxRows() - 1, 1).setNumberFormat('@');
+  events.getRange(2, C.Price, events.getMaxRows() - 1, 1).setNumberFormat('@');
   events.getRange(2, 1, events.getMaxRows() - 1, EVENT_COLS.length).setVerticalAlignment('middle');
   events.hideColumns(C['Flier ID'], 4);
   events.getRange(2, C.Type, events.getMaxRows() - 1, 1).setDataValidation(
@@ -341,8 +342,10 @@ function getEvents_() {
   const last = sheet.getLastRow();
   if (last < 2) return [];
   const now = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm');
-  return sheet.getRange(2, 1, last - 1, EVENT_COLS.length).getValues()
-    .map((r) => ({
+  const range = sheet.getRange(2, 1, last - 1, EVENT_COLS.length);
+  const shown = range.getDisplayValues();
+  return range.getValues()
+    .map((r, i) => ({
       date: r[C.Date - 1] instanceof Date ? Utilities.formatDate(r[C.Date - 1], CONFIG.TZ, 'yyyy-MM-dd') : String(r[C.Date - 1]),
       time: r[C.Time - 1] instanceof Date ? prettyTime_(Utilities.formatDate(r[C.Time - 1], CONFIG.TZ, 'HH:mm')) : String(r[C.Time - 1]),
       start: r[C.Start - 1] instanceof Date ? Utilities.formatDate(r[C.Start - 1], CONFIG.TZ, 'HH:mm') : String(r[C.Start - 1]),
@@ -350,7 +353,7 @@ function getEvents_() {
       type: String(r[C.Type - 1]) || 'Other',
       spooky: Boolean(r[C.Spooky - 1]),
       venue: String(r[C.Venue - 1]),
-      price: String(r[C.Price - 1]),
+      price: shown[i][C.Price - 1], // as displayed, so "$85" keeps its dollar sign
       description: String(r[C.Description - 1]),
       link: String(r[C.Link - 1]),
       status: String(r[C.Status - 1]),
@@ -503,7 +506,7 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
     row[C.Type - 1] = cell_(ev.type);
     row[C.Spooky - 1] = ev.spooky ? '🎃' : '';
     row[C.Venue - 1] = cell_(ev.venue);
-    row[C.Price - 1] = cell_(ev.price || 'Free');
+    row[C.Price - 1] = cell_(ev.price || 'Unknown');
     row[C.NTAFLOF - 1] = ev.ntaflof ? 'yes' : '';
     row[C.Description - 1] = cell_(ev.description);
     row[C.Link - 1] = cell_(url);
@@ -522,6 +525,7 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
   sheet.getRange(start, C.Time, rows.length, 1).setNumberFormat('@');
   sheet.getRange(start, C.Start, rows.length, 1).setNumberFormat('@');
   sheet.getRange(start, C['Arrive by'], rows.length, 1).setNumberFormat('@');
+  sheet.getRange(start, C.Price, rows.length, 1).setNumberFormat('@');
   sheet.getRange(start, 1, rows.length, EVENT_COLS.length).setValues(rows);
   sheet.setRowHeights(start, rows.length, 150);
   sortEvents_();
@@ -572,6 +576,12 @@ function cleanUp_() {
     sheet.getRange(1, 1, 1, EVENT_COLS.length).setValues([EVENT_COLS]).setFontWeight('bold').setBackground('#1f1430').setFontColor('#ffb347');
     sheet.hideColumns(C['Flier ID'], 4);
     sheet.setColumnWidth(C.NTAFLOF, 80);
+  }
+  // Prices typed as "$85" become currency numbers; store them as the text they display.
+  if (sheet.getLastRow() > 1) {
+    const priceRange = sheet.getRange(2, C.Price, sheet.getLastRow() - 1, 1);
+    const display = priceRange.getDisplayValues();
+    priceRange.setNumberFormat('@').setValues(display.map(([v]) => [cell_(v)]));
   }
   const rows = readEventRows_(sheet);
   let fixed = 0;
@@ -636,12 +646,15 @@ function refreshDetails_(sub) {
     const date = r[C.Date - 1] instanceof Date ? Utilities.formatDate(r[C.Date - 1], CONFIG.TZ, 'yyyy-MM-dd') : String(r[C.Date - 1]);
     const ev = extracted.events.find((e) => e.date === date) || (extracted.events.length === 1 ? extracted.events[0] : null);
     if (!ev) return;
-    sheet.getRange(i + 2, C.Price).setValue(cell_(ev.price || 'Free'));
-    sheet.getRange(i + 2, C.NTAFLOF).setValue(ev.ntaflof ? 'yes' : '');
+    // Only re-check prices that were never confirmed, so hand edits like "$85" are kept.
+    const current = String(r[C.Price - 1]).trim();
+    if (current && !/^(free|unknown)$/i.test(current)) return;
+    sheet.getRange(i + 2, C.Price).setNumberFormat('@').setValue(cell_(ev.price || 'Unknown'));
+    if (ev.ntaflof) sheet.getRange(i + 2, C.NTAFLOF).setValue('yes');
     updated++;
   });
   const ev = extracted.events[0] || {};
-  return { ok: true, message: `updated ${updated} row(s): ${ev.price || 'Free'}${ev.ntaflof ? ' · NTAFLOF' : ''}` };
+  return { ok: true, message: `updated ${updated} row(s): ${ev.price || 'Unknown'}${ev.ntaflof ? ' · NTAFLOF' : ''}` };
 }
 
 /** Fills Credit / Credit link on an already-imported post's rows. Body: {url, name, link} */
@@ -854,7 +867,7 @@ function extractEvents_({ image, caption, title, url, note, postedAt, manual }) 
     '- date: YYYY-MM-DD. If the year is missing, use the next occurrence on or after the post date.',
     '- start_time / end_time: 24-hour HH:MM, or "" if not stated. "Doors 8" means start_time 20:00.',
     '- venue: venue name plus street address if shown.',
-    '- price: the ticket, cover or suggested-donation price as written ("$10 / $15 at door", "$5-20 sliding scale"). Use "Free" if it says free or no price is mentioned anywhere.',
+    '- price: the ticket, cover or suggested-donation price as written ("$10 / $15 at door", "$5-20 sliding scale"). Use "Free" only if the post says it is free (free, free entry, no cover). If no price is mentioned, use "".',
     '- host: the organizer or venue presenting it, as named on the post (e.g. "Aquarium Gallery"), or "".',
     '- ntaflof: true only if it says no one is turned away for lack of funds (NTAFLOF, NOTAFLOF, or those words spelled out).',
     '- name: the event\'s own title, cleaned up (not shouting all caps unless that is the name).',
