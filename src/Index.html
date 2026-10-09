@@ -153,9 +153,12 @@
   .credit a:hover { color: var(--accent); text-decoration: underline; }
   .credit .ico { width: 1em; height: 1em; vertical-align: -0.125em; }
   .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
-  .lightbox { width: auto; max-width: calc(100vw - 32px); background: transparent; border: 0; }
-  .lightbox img { max-width: 100%; max-height: calc(100vh - 80px); display: block; border-radius: 8px; }
-  .lightbox .btn { margin: 8px auto 0; display: block; }
+  /* Padding + visible overflow leave room for the Close button's focus ring; dvh accounts for phone toolbars. */
+  .lightbox { width: auto; max-width: calc(100vw - 16px); max-height: none; padding: 8px; overflow: visible;
+              background: transparent; border: 0; }
+  .lightbox img { max-width: 100%; max-height: calc(100vh - 120px); max-height: calc(100dvh - 120px);
+                  display: block; border-radius: 8px; margin: 0 auto; }
+  .lightbox .btn { margin: 14px auto 6px; display: block; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   /* On phones the filters are too tall to pin; let them scroll away with the page. */
