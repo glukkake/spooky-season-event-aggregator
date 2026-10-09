@@ -29,7 +29,7 @@ const CONFIG = {
   // Public form limits, so spam can't run up the Claude bill or flood the list.
   PUBLIC_PER_HOUR: 30,
   PUBLIC_PER_DAY: 120,
-  MAX_IMAGE_BYTES: 8 * 1024 * 1024,
+  MAX_IMAGE_BYTES: 4 * 1024 * 1024,
   TYPES: [
     'Dance party', 'Drag', 'Burlesque', 'Music show', 'Workshop', 'Market',
     'Art show', 'Film', 'Theater', 'Comedy', 'Costume contest', 'Community',
@@ -290,7 +290,7 @@ function doGet(e) {
   }
   const t = HtmlService.createTemplateFromFile('Index');
   t.config = { title: CONFIG.TITLE, tagline: CONFIG.TAGLINE, types: CONFIG.TYPES, from: CONFIG.KEEP_FROM, seasonEnd: CONFIG.SEASON_END,
-    invite: clip_(params.invite, 40) };
+    invite: /^[A-Za-z0-9]{1,40}$/.test(params.invite || '') ? params.invite : '' };
   return t.evaluate()
     .setTitle(CONFIG.TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -362,13 +362,27 @@ function getEvents_() {
 
 /** Rows pasted into the "Add links here" tab. Runs every 10 minutes and from the menu. */
 function processInbox() {
-  // Public name because the time trigger needs it; it only reads the owner-controlled inbox tab.
   const sheet = getSpreadsheet_().getSheetByName(SHEETS.INBOX);
   if (!sheet || sheet.getLastRow() < 2) return;
+  // Callable by anyone (the trigger needs a public name), so only one run at a time,
+  // and each row is claimed before the paid Claude call. Document lock, because
+  // processSubmission_ takes the script lock.
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(0)) return;
+  try {
+    processInboxRows_(sheet);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function processInboxRows_(sheet) {
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, INBOX_COLS.length).getValues();
   const started = Date.now();
   rows.forEach((r, i) => {
     if (!r[0] || r[3] || Date.now() - started > 4.5 * 60 * 1000) return;
+    sheet.getRange(i + 2, 4).setValue('Processing…');
+    SpreadsheetApp.flush();
     let result;
     try {
       result = processSubmission_({ url: String(r[0]).trim(), note: r[1], addedBy: r[2] || 'sheet' });
@@ -418,7 +432,6 @@ function processSubmission_(sub) {
     return { ok: false, status: 'unreadable', message: "Couldn't open that link (it may be private). Share a screenshot of the flier instead." };
   }
 
-  const flierId = image ? saveFlier_(image) : '';
   let extracted;
   if (hasManual && !image && !caption) {
     extracted = { is_event: true, events: [manualToEvent_(manual)] };
@@ -428,19 +441,25 @@ function processSubmission_(sub) {
 
   const addedBy = sub.addedBy || 'shortcut';
   if (!extracted.is_event || !extracted.events.length) {
-    logSkipped_(url, 'Not an event', '', '', addedBy, flierId);
+    logSkipped_(url, 'Not an event', '', '', addedBy, '');
     return { ok: true, status: 'skipped', message: "That doesn't look like an event, so it went to the Skipped tab." };
   }
 
   const kept = [];
   const outside = [];
   extracted.events.forEach((ev) => {
+    // Model output is untrusted: only well-formed times and known types get through.
+    ev.start_time = validTime_(ev.start_time);
+    ev.end_time = validTime_(ev.end_time);
+    if (!CONFIG.TYPES.includes(ev.type)) ev.type = 'Other';
     if (manual.name) ev.name = manual.name;
     if (manual.type && CONFIG.TYPES.includes(manual.type)) ev.type = manual.type;
     if (/^\d{4}-\d{2}-\d{2}$/.test(ev.date) && ev.date >= CONFIG.KEEP_FROM) kept.push(ev);
     else outside.push(ev);
   });
 
+  // Fliers are stored (re-encoded) only for events that make the list.
+  const flierId = image && kept.length ? saveFlier_(image) : '';
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
@@ -449,7 +468,7 @@ function processSubmission_(sub) {
     if (kept.length && !appendEvents_(kept, url, addedBy, flierId, credit)) {
       return { ok: true, status: 'duplicate', message: `Already on the list: ${kept[0].name} 👻` };
     }
-    outside.forEach((ev) => logSkipped_(url, ev.date ? 'Before ' + CONFIG.KEEP_FROM : 'No date found', ev.name, ev.date, addedBy, flierId));
+    outside.forEach((ev) => logSkipped_(url, ev.date ? 'Before ' + CONFIG.KEEP_FROM : 'No date found', ev.name, ev.date, addedBy, ''));
   } finally {
     lock.releaseLock();
   }
@@ -475,9 +494,9 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
     row[C.Flier - 1] = flierId ? `=IMAGE("${thumbUrl_(flierId)}")` : '';
     row[C.Date - 1] = new Date(y, m - 1, d);
     row[C.Day - 1] = Utilities.formatDate(new Date(y, m - 1, d, 12), CONFIG.TZ, 'EEE');
-    row[C.Time - 1] = [ev.start_time, ev.end_time].filter(Boolean).map(prettyTime_).join(' – ');
+    row[C.Time - 1] = cell_([ev.start_time, ev.end_time].filter(Boolean).map(prettyTime_).join(' – '));
     row[C.Event - 1] = cell_(ev.name);
-    row[C.Type - 1] = ev.type;
+    row[C.Type - 1] = cell_(ev.type);
     row[C.Spooky - 1] = ev.spooky ? '🎃' : '';
     row[C.Venue - 1] = cell_(ev.venue);
     row[C.Price - 1] = cell_(ev.price || 'Free');
@@ -488,9 +507,9 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
     row[C.Added - 1] = now;
     row[C.Status - 1] = 'live';
     row[C['Flier ID'] - 1] = flierId;
-    row[C.Start - 1] = ev.start_time || '99:99';
+    row[C.Start - 1] = cell_(ev.start_time || '99:99');
     row[C.Key - 1] = url ? cell_(url + '#' + ev.date) : '';
-    row[C['Arrive by'] - 1] = arriveBy_(ev.start_time, ev.end_time);
+    row[C['Arrive by'] - 1] = cell_(arriveBy_(ev.start_time, ev.end_time));
     row[C.Credit - 1] = credit ? cell_(credit.name) : '';
     row[C['Credit link'] - 1] = credit && /^https?:\/\//.test(credit.link) ? cell_(credit.link) : '';
     return row;
@@ -763,6 +782,14 @@ function fetchImage_(url) {
 }
 
 function saveFlier_(blob) {
+  // Re-encode so nothing hidden inside or after the image data is stored. (Same-format
+  // getAs() returns the original bytes, so convert PNG -> JPEG and everything else -> PNG.)
+  try {
+    blob = validImage_(blob.getContentType() === 'image/png' ? blob.getAs('image/jpeg') : blob.getAs('image/png'));
+  } catch (err) {
+    blob = null;
+  }
+  if (!blob) return '';
   const ext = (blob.getContentType().split('/')[1] || 'jpg').replace('jpeg', 'jpg');
   const name = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyyMMdd-HHmmss') + '-' + Math.random().toString(36).slice(2, 6) + '.' + ext;
   const file = getFolder_().createFile(blob.setName(name));
@@ -909,6 +936,11 @@ function endsAt_(ev) {
  * Sort key within a day: the last moment you can still show up.
  * End time if known (after-midnight ends count as 24:00+), otherwise the start time.
  */
+/** "HH:MM" (24-hour) or "". */
+function validTime_(t) {
+  return typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t) ? t : '';
+}
+
 function arriveBy_(start, end) {
   if (end) {
     const [h, m] = end.split(':').map(Number);
@@ -1044,6 +1076,11 @@ function underPublicLimit_() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/** JSON that's safe inside a <script> tag (no "</script>" breakouts). Used by Index.html scriptlets. */
+function jsonForScript_(v) {
+  return JSON.stringify(v).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
 function clip_(v, n) {

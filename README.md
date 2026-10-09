@@ -69,10 +69,17 @@ The page runs as you, so it was built defensively:
 
 - Anonymous visitors can only read the list and submit events. Owner-only menu actions check that it's really you.
 - Text from posts can't become spreadsheet formulas, so no one can use `=IMPORTDATA(...)` tricks to leak your sheet.
-- Uploads must be real JPG/PNG/GIF/WebP images under 8 MB.
+- Uploads must be real JPG/PNG/GIF/WebP images under 4 MB, and every stored flier is re-encoded, so nothing hidden inside an image is kept.
 - The public form is rate limited (30 an hour, 120 a day) so spam can't run up your Claude bill.
-- Claude is told that posts are untrusted data and can only return event details.
-- Cards only ever link to `http(s)` URLs.
+- Claude is told that posts are untrusted data and can only return event details, and its answers are checked (times, dates, types) before anything is saved.
+- Cards only ever link to `http(s)` URLs, and nothing from a link's address is ever run as code on the page.
+
+## Privacy
+
+- **No tracking.** No analytics, cookies, or "phone home": nothing about you or your visitors is sent to the author of this project.
+- **No third-party scripts or fonts.** Icons are built into the page and the title font is embedded. Visitors' browsers only talk to Google, which hosts the app and the flier images.
+- **What leaves your Google account:** flier images and captions go to Anthropic's Claude API (using your key) to be read. Shared links are fetched by Google's servers to find the flier.
+- **Names are optional.** The "Your name" field on the add form is only visible in your sheet, never on the public page.
 
 Found a hole? Please report it privately through GitHub's **Security → Report a vulnerability** on this repo rather than a public issue.
 
