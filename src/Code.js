@@ -47,6 +47,8 @@ const SETTINGS = [
   ['Time zone', 'tz', () => Session.getScriptTimeZone(), 'e.g. America/New_York, Europe/London, Australia/Sydney'],
   ['Season starts', 'seasonStart', () => new Date().getFullYear() + '-10-01', 'Events before this go to the Skipped tab (YYYY-MM-DD)'],
   ['Season ends', 'seasonEnd', () => new Date().getFullYear() + '-11-08', '"Spooky only" and "This Season" stop after this date (YYYY-MM-DD)'],
+  ['Footer credit', 'footerCredit', () => '', 'Optional line at the bottom of the page, e.g. "Made by yoursite.com"'],
+  ['Footer credit link', 'footerLink', () => '', 'Optional https:// link for the footer credit'],
 ];
 
 let settingsCache_ = null;
@@ -285,12 +287,14 @@ function doPost(e) {
 /** Public page. */
 function doGet(e) {
   const params = (e && e.parameter) || {};
+  if (params.format === 'version') return json_({ version: pageVersion_() });
   if (params.format === 'json') {
     return json_(hasAccess_(params.invite) ? getEvents_() : { locked: true });
   }
   const t = HtmlService.createTemplateFromFile('Index');
   t.config = { title: CONFIG.TITLE, tagline: CONFIG.TAGLINE, types: CONFIG.TYPES, from: CONFIG.KEEP_FROM, seasonEnd: CONFIG.SEASON_END,
-    invite: /^[A-Za-z0-9]{1,40}$/.test(params.invite || '') ? params.invite : '' };
+    invite: /^[A-Za-z0-9]{1,40}$/.test(params.invite || '') ? params.invite : '',
+    version: pageVersion_(), pageUrl: CONFIG.PAGE_URL, footerHtml: footerHtml_() };
   return t.evaluate()
     .setTitle(CONFIG.TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -1076,6 +1080,34 @@ function underPublicLimit_() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Fingerprint of the page's source. An open page compares it with the server's on each refresh
+ * and offers a reload when a new version has been deployed (Home Screen apps have no reload button).
+ */
+function pageVersion_() {
+  const src = HtmlService.createHtmlOutputFromFile('Index').getContent();
+  return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, src)).slice(0, 12);
+}
+
+function escapeHtml_(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/** The optional footer credit from the Settings tab, escaped; the link (https only) wraps its hostname if it appears in the text. */
+function footerHtml_() {
+  const text = String(settings_().footerCredit || '').trim();
+  if (!text) return '';
+  let html = escapeHtml_(text);
+  const link = String(settings_().footerLink || '').trim();
+  if (/^https:\/\/[^\s"'<>]+$/i.test(link)) {
+    const a = '<a href="' + escapeHtml_(link) + '" target="_blank" rel="noopener noreferrer">';
+    const host = escapeHtml_(link.replace(/^https:\/\/(www\.)?/i, '').split(/[/?#]/)[0]);
+    const i = host ? html.indexOf(host) : -1;
+    html = i >= 0 ? html.slice(0, i) + a + host + '</a>' + html.slice(i + host.length) : a + html + '</a>';
+  }
+  return html + ' ';
 }
 
 /** JSON that's safe inside a <script> tag (no "</script>" breakouts). Used by Index.html scriptlets. */

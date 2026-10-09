@@ -113,6 +113,15 @@
           background: var(--panel-2); overflow: hidden; cursor: zoom-in; }
   .mini img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .mini.none { display: grid; place-items: center; cursor: default; }
+  .statusbar { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .statusbar[hidden] { display: none; }
+  .statusbar .linkbtn { font-size: 13px; }
+  .newver { color: var(--focus); font-weight: 600; }
+  .newver a { color: var(--focus); }
+  .site-foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .site-foot p { margin: 0; max-width: 70ch; }
+  .site-foot a { color: var(--muted); }
+  .site-foot a:hover { color: var(--accent); }
   .empty { text-align: center; color: var(--muted); padding: 60px 0; }
   .locked { max-width: 520px; margin: 48px auto; text-align: center; }
   .locked h2 { margin: 0 0 8px; }
@@ -152,6 +161,14 @@
   /* On phones the filters are too tall to pin; let them scroll away with the page. */
   @media (max-width: 600px) {
     .controls { position: static; }
+    /* Floating round add button (FAB) on phones. */
+    #openAdd { position: fixed; z-index: 20; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
+               width: 60px; height: 60px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+               box-shadow: 0 6px 20px rgba(0, 0, 0, .45), 0 0 0 2px var(--bg); }
+    #openAdd[hidden] { display: none; }
+    #openAdd .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    #openAdd .plus { font-size: 34px; line-height: 1; font-weight: 400; margin-top: -3px; }
+    .wrap { padding-bottom: 96px; }
     .seg.view { margin-left: 0; }
   }
   @media (max-width: 860px) {
@@ -176,7 +193,7 @@
       <h1><?= config.title ?></h1>
       <p class="tagline"><?= config.tagline ?></p>
     </div>
-    <button class="btn" id="openAdd" type="button">+ Add an event</button>
+    <button class="btn" id="openAdd" type="button" aria-label="Add an event"><span class="plus" aria-hidden="true">+</span><span class="label"> Add an event</span></button>
   </header>
 
   <div class="controls" role="search">
@@ -203,7 +220,16 @@
     <div class="chips" id="types" role="group" aria-label="Filter by type"></div>
   </div>
 
+  <div class="statusbar">
+    <span id="updated" class="updated"></span>
+    <button class="linkbtn" id="refresh" type="button">↻ Refresh</button>
+    <span id="newVersion" class="newver" hidden>A new version is available. <a id="reloadLink" href="#">Reload</a></span>
+  </div>
   <main id="list" aria-live="polite"><p class="empty">Summoning events…</p></main>
+
+  <footer class="site-foot">
+    <p><?!= config.footerHtml ?>Event details are read from fliers by AI, so double-check the original post before you go.</p>
+  </footer>
 </div>
 
 <dialog id="addDlg" aria-labelledby="addTitle">
@@ -443,6 +469,7 @@
 
   function showLocked() {
     document.querySelector('.controls').hidden = true;
+    document.querySelector('.statusbar').hidden = true;
     $('openAdd').hidden = true;
     $('list').innerHTML =
       '<div class="locked"><h2>🔒 This list is invite-only</h2>' +
@@ -460,9 +487,24 @@
     });
   }
 
-  function load() {
+  const PAGE_VERSION = <?!= jsonForScript_(config.version) ?>;
+  const PAGE_URL = <?!= jsonForScript_(config.pageUrl || '') ?>;
+  let lastLoaded = 0;
+  let lastData = '';
+
+  function showUpdated() {
+    if (!lastLoaded) return;
+    const mins = Math.floor((Date.now() - lastLoaded) / 60000);
+    $('updated').textContent = mins < 1 ? 'Updated just now' : 'Updated ' + mins + ' min ago';
+  }
+  setInterval(showUpdated, 30000);
+
+  // quiet = background refresh: don't flash "loading" or replace the list on a hiccup.
+  function load(quiet) {
+    if (!quiet) $('updated').textContent = 'Loading…';
     google.script.run
       .withSuccessHandler((res) => {
+        checkVersion();
         if (res.locked) {
           store.set('');
           const retry = state.triedCode;
@@ -472,14 +514,47 @@
         }
         if (state.invite) store.set(state.invite);
         document.querySelector('.controls').hidden = false;
+        document.querySelector('.statusbar').hidden = false;
         $('openAdd').hidden = false;
+        lastLoaded = Date.now();
+        showUpdated();
+        const data = JSON.stringify(res.events);
+        if (quiet && data === lastData) return; // nothing changed; leave the page alone
+        lastData = data;
         state.events = res.events;
         setRange(state.custom && state.from, state.custom && state.to);
         render();
       })
-      .withFailureHandler(() => { $('list').innerHTML = '<p class="empty">Couldn\'t load events. Refresh to try again.</p>'; })
+      .withFailureHandler(() => {
+        if (quiet) return;
+        $('updated').textContent = "Couldn't refresh. Check your connection and try again.";
+        if (!state.events.length) $('list').innerHTML = '<p class="empty">Couldn\'t load events. Tap Refresh to try again.</p>';
+      })
       .getEvents(state.invite);
   }
+
+  // An open page keeps talking to the code it was loaded with, so ask the live page directly.
+  function checkVersion() {
+    if (!PAGE_URL || !window.fetch) return;
+    fetch(PAGE_URL + '?format=version', { credentials: 'omit' })
+      .then((r) => r.json())
+      .then((v) => {
+        if (!v || !v.version || v.version === PAGE_VERSION) return;
+        $('reloadLink').href = PAGE_URL + (state.invite ? '?invite=' + encodeURIComponent(state.invite) : '');
+        $('newVersion').hidden = false;
+      })
+      .catch(() => { /* offline or blocked; try again next refresh */ });
+  }
+
+  $('refresh').addEventListener('click', () => load(false));
+  $('reloadLink').addEventListener('click', (ev) => {
+    if ($('reloadLink').getAttribute('href') === '#') { ev.preventDefault(); location.reload(); }
+  });
+  // Home Screen apps stay in memory: refresh when it comes back to the foreground, and every 5 minutes while open.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - lastLoaded > 60000) load(true);
+  });
+  setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 5 * 60000);
 
   $('types').addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-type]'); if (!b) return;

@@ -13,6 +13,8 @@ It runs entirely in your own Google account (Google Sheets + Apps Script). No se
 - **Reads fliers for you.** Paste an Instagram, Facebook or event link, or upload a flier image. Claude pulls out the details and picks a type (dance party, workshop, burlesque, film, market…).
 - **One row per date.** A weekly movie night becomes four listings, one per Monday.
 - **A page people actually want to use.** Fliers grouped by day, color-coded type tags (click one to filter), search, a date range picker, and a 🎃 Spooky only / This Season / All events toggle.
+- **Stays fresh as a Home Screen app.** Events refresh when the app comes back to the foreground and every few minutes, with a Refresh button, and open copies offer a Reload when a new version is deployed.
+- **Discloses the AI.** The page footer notes that event details are read from fliers by AI, so people double-check the original post.
 - **Cards or table.** Big flier cards by default, or a compact table (a short list on phones) for people who just want the details.
 - **Ordered by "get there by."** Within a day, events that end soonest come first, so people can plan a night of hopping.
 - **Late-night aware.** A 10pm–2am party stays listed until 2am, not until midnight.
@@ -29,7 +31,7 @@ It runs entirely in your own Google account (Google Sheets + Apps Script). No se
 1. **[Make your own copy of the template sheet](https://docs.google.com/spreadsheets/d/12RIoAboIik_IPqx2G_PwnpzshwXVzqeGuJcN_Z97ZuA/copy)**. Google copies the sheet and its code into your account.
 2. Open your copy and wait a few seconds for the **🎃 Events** menu. A **Start here** tab walks you through the rest:
    1. **🎃 Events → 1. Set up sheet.** Google asks for permission. Because this is your own private copy, Google shows "Google hasn't verified this app": choose **Advanced → Go to (unsafe) → Allow**.
-   2. Fill in the **Settings** tab: page title, city, time zone, season start and end dates.
+   2. Fill in the **Settings** tab: page title, city, time zone, season start and end dates (and an optional footer credit).
    3. Get a Claude API key at [console.anthropic.com](https://console.anthropic.com), then **🎃 Events → 2. Set Claude API key**.
    4. **Extensions → Apps Script → Deploy → New deployment → ⚙ Web app.** Execute as: **Me**. Who has access: **Anyone**. Click **Deploy** and copy the Web app URL.
    5. **🎃 Events → 3. Save public page link** and paste it. That URL is your page: share it!
