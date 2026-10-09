@@ -1,0 +1,6 @@
+# Your own Apps Script project IDs: keep out of the repo
+.clasp.json
+.clasprc.json
+node_modules/
+.DS_Store
+*.local.*

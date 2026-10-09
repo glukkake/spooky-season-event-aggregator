@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/fontawesome.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/brands.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/solid.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #120d1a;
+    --panel: #1d1529;
+    --panel-2: #271c37;
+    --line: #3a2b50;
+    --text: #f4eefb;
+    --muted: #b9abcc;
+    --accent: #ff9a3c;
+    --accent-ink: #1a0f05;
+    --focus: #ffd166;
+    --ok: #8be28b;
+    --bad: #ff8a8a;
+    --radius: 14px;
+    --control-radius: 4px;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 Inter, system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: var(--control-radius); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 64px; }
+
+  header { padding: 28px 0 8px; display: flex; flex-wrap: wrap; gap: 16px; align-items: end; justify-content: space-between; }
+  h1 { font-family: Creepster, Inter, sans-serif; font-weight: 400; letter-spacing: .03em;
+       font-size: clamp(2.2rem, 7vw, 3.6rem); line-height: 1; margin: 0; color: var(--accent); }
+  .tagline { margin: 6px 0 0; color: var(--muted); }
+  .dates { margin-top: 10px; gap: 8px 14px; font-size: 14px; }
+  .dates label { margin: 0; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .dates input[type=date] { width: auto; padding: 6px 8px; background: var(--panel); color-scheme: dark; }
+  .linkbtn { appearance: none; border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600;
+             text-decoration: underline; cursor: pointer; padding: 4px 2px; }
+  .day h2 .count { color: var(--muted); font-size: .9rem; font-weight: 600; }
+
+  .btn { appearance: none; border: 0; border-radius: var(--control-radius); padding: 11px 18px; font: inherit; font-weight: 700;
+         background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+  .btn[disabled] { opacity: .6; cursor: progress; }
+
+  .controls { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent);
+              backdrop-filter: blur(8px); padding: 12px 0; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .search { flex: 1 1 220px; min-width: 0; padding: 10px 14px; border-radius: var(--control-radius); border: 1px solid var(--line);
+            background: var(--panel); color: var(--text); font: inherit; }
+  .chips { margin-top: 10px; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+  .chip { flex: none; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+          border-radius: var(--control-radius); padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap; }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  .chip .n { opacity: .7; margin-left: 4px; }
+  .seg { display: inline-flex; flex: none; border: 1px solid var(--line); border-radius: var(--control-radius); overflow: hidden; }
+  .seg button { appearance: none; border: 0; background: var(--panel); color: var(--text); font: inherit; font-size: 14px;
+                padding: 7px 10px; cursor: pointer; white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+
+  .day { margin-top: 28px; }
+  .day + .day { border-top: 2px solid var(--line); padding-top: 24px; }
+  .day h2 { font-size: 1.15rem; margin: 0 0 12px; display: flex; gap: 10px; align-items: baseline; }
+  .day h2 .rel { color: var(--accent); font-size: .85rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+          display: flex; flex-direction: column; }
+  .flier { display: block; width: 100%; aspect-ratio: 4 / 5; background: var(--panel-2); border: 0; padding: 0; cursor: zoom-in; }
+  .flier img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .flier.none { display: grid; place-items: center; font-size: 3rem; cursor: default; }
+  .body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .meta { color: var(--muted); font-size: 14px; }
+  .when { color: var(--accent); font-weight: 700; font-size: 14px; }
+  .card h3 { margin: 0; font-size: 1.05rem; line-height: 1.25; }
+  .price { font-size: 14px; font-weight: 600; }
+  .ntaflof { align-self: flex-start; font-size: 12px; font-weight: 600; color: #a8f0c6; border: 1px solid color-mix(in srgb, #a8f0c6 50%, transparent);
+             border-radius: var(--control-radius); padding: 2px 7px; }
+  .desc { margin: 0; font-size: 14px; }
+  .foot { margin-top: auto; padding-top: 6px; display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 13px; }
+  .tag { --c: var(--muted); appearance: none; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+         color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent);
+         border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); border-radius: 999px; padding: 2px 9px; }
+  .tag:hover, .tag[aria-pressed="true"] { background: var(--c); color: var(--bg); }
+  .chip[aria-pressed="true"][style] { background: var(--c); border-color: var(--c); }
+  .chip[aria-pressed="true"] .dot { background: var(--accent-ink); }
+  .chip .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: 1px; }
+
+  .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  .locked { max-width: 520px; margin: 48px auto; text-align: center; }
+  .locked h2 { margin: 0 0 8px; }
+  .locked p { color: var(--muted); }
+  .locked .row { justify-content: center; margin-top: 16px; }
+
+  dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--text);
+           padding: 0; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+  dialog::backdrop { background: rgba(5, 2, 10, .75); }
+  .dlg { padding: 20px; }
+  .dlg h2 { margin: 0 0 4px; }
+  .dlg p.help { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 12px 0 4px; }
+  label .opt { font-weight: 400; color: var(--muted); }
+  input, select, textarea { width: 100%; padding: 10px 12px; border-radius: var(--control-radius); border: 1px solid var(--line);
+                            background: var(--bg); color: var(--text); font: inherit; }
+  textarea { min-height: 70px; resize: vertical; }
+  input[type=file]::file-selector-button { border-radius: var(--control-radius); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 8px; }
+  summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .status { margin-top: 12px; min-height: 1.4em; font-weight: 600; }
+  .status.ok { color: var(--ok); } .status.bad { color: var(--bad); }
+  label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; margin-top: 14px; }
+  label.check input { width: auto; accent-color: var(--accent); }
+  .credit { font-size: 13px; color: var(--muted); }
+  .credit a { color: var(--muted); text-decoration: none; }
+  .credit a:hover { color: var(--accent); text-decoration: underline; }
+  .credit i { width: 1.1em; text-align: center; }
+  .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  .lightbox { width: auto; max-width: calc(100vw - 32px); background: transparent; border: 0; }
+  .lightbox img { max-width: 100%; max-height: calc(100vh - 80px); display: block; border-radius: 8px; }
+  .lightbox .btn { margin: 8px auto 0; display: block; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* On phones the filters are too tall to pin; let them scroll away with the page. */
+  @media (max-width: 600px) { .controls { position: static; } }
+  @media (max-width: 480px) { .two { grid-template-columns: 1fr; } .grid { grid-template-columns: 1fr; gap: 14px; } }
+  @media (prefers-reduced-motion: no-preference) { .card { transition: transform .15s; } .card:hover { transform: translateY(-2px); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1><?= config.title ?></h1>
+      <p class="tagline"><?= config.tagline ?></p>
+    </div>
+    <button class="btn" id="openAdd" type="button">+ Add an event</button>
+  </header>
+
+  <div class="controls" role="search">
+    <div class="row">
+      <label class="sr-only" for="q">Search events</label>
+      <input class="search" id="q" type="search" placeholder="Search name, venue, vibe…" autocomplete="off">
+    </div>
+    <div class="row dates">
+      <div class="seg" id="scope" role="group" aria-label="Which events">
+        <button type="button" data-scope="spooky" aria-pressed="true">🎃 Spooky only</button>
+        <button type="button" data-scope="season" aria-pressed="false">This Season</button>
+        <button type="button" data-scope="all" aria-pressed="false">All events</button>
+      </div>
+      <div class="row" role="group" aria-label="Date range">
+        <label for="from">From <input id="from" type="date"></label>
+        <label for="to">To <input id="to" type="date"></label>
+        <button class="linkbtn" id="resetDates" type="button" hidden>Reset dates</button>
+      </div>
+    </div>
+    <div class="chips" id="types" role="group" aria-label="Filter by type"></div>
+  </div>
+
+  <main id="list" aria-live="polite"><p class="empty">Summoning events…</p></main>
+</div>
+
+<dialog id="addDlg" aria-labelledby="addTitle">
+  <form class="dlg" id="addForm" method="dialog">
+    <h2 id="addTitle">Add an event</h2>
+    <p class="help">Paste a link, upload the flier, or both. We read the flier and fill in the rest. Add details below if there's no flier.</p>
+
+    <label for="f-url">Event link <span class="opt">(Instagram, Facebook, Eventbrite…)</span></label>
+    <input id="f-url" name="url" type="url" inputmode="url" placeholder="https://www.instagram.com/p/…">
+
+    <label for="f-img">Flier image <span class="opt">(screenshot works)</span></label>
+    <input id="f-img" name="image" type="file" accept="image/*">
+
+    <details>
+      <summary>Type in details</summary>
+      <label for="f-name">Event name</label>
+      <input id="f-name" name="name" maxlength="120">
+      <div class="two">
+        <div><label for="f-date">Date</label><input id="f-date" name="date" type="date" min="<?= config.from ?>"></div>
+        <div><label for="f-time">Time</label><input id="f-time" name="time" placeholder="9pm"></div>
+      </div>
+      <label for="f-venue">Venue</label>
+      <input id="f-venue" name="venue" maxlength="120">
+      <label for="f-type">Type</label>
+      <select id="f-type" name="type">
+        <option value="">Let us guess</option>
+        <? config.types.forEach(function (t) { ?><option><?= t ?></option><? }); ?>
+      </select>
+      <label for="f-desc">What is it? <span class="opt">(one line)</span></label>
+      <textarea id="f-desc" name="description" maxlength="300"></textarea>
+    </details>
+
+    <label class="check" for="f-credit"><input id="f-credit" name="credit" type="checkbox" checked> Credit the original poster on the listing</label>
+
+    <label for="f-by">Your name <span class="opt">(optional: an FYI for the owner, not listed publicly)</span></label>
+    <input id="f-by" name="addedBy" maxlength="60" autocomplete="nickname">
+    <div class="hp" aria-hidden="true"><label for="f-website">Website</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div>
+
+    <p class="status" id="status" role="status"></p>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="closeAdd">Close</button>
+      <button class="btn" type="submit" id="submitAdd">Add it</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="lightbox" class="lightbox" aria-label="Flier">
+  <img id="lbImg" alt="">
+  <button class="btn" type="button" id="lbClose">Close</button>
+</dialog>
+
+<script>
+  const TZ_TODAY = new Date();
+  const state = { events: [], type: 'All', scope: 'spooky', q: '', from: '', to: '', custom: false };
+  // Halloween colors first, then around the rainbow. All are light enough to read on the dark cards.
+  const TYPE_COLORS = {
+    'Dance party': '#ff8a3d',     // pumpkin
+    'Costume contest': '#ffcf3d', // candy corn
+    'Drag': '#b98cff',            // witch purple
+    'Burlesque': '#ff5c6c',       // blood red
+    'Film': '#8be36a',            // slime green
+    'Music show': '#e9e2d0',      // bone
+    'Theater': '#ff8fc0',         // pink
+    'Art show': '#ff9f80',        // coral
+    'Comedy': '#d4f06a',          // lime
+    'Workshop': '#3fd8c2',        // teal
+    'Market': '#63c5ff',          // sky
+    'Community': '#8fa2ff',       // periwinkle
+    'Fundraiser': '#e38cff',      // orchid
+    'Kids & family': '#a8f0c6',   // mint
+    'Other': '#a9a3b5',           // ghost gray
+  };
+  const typeColor = (t) => TYPE_COLORS[t] || TYPE_COLORS.Other;
+  const SEASON_END = <?!= JSON.stringify(config.seasonEnd) ?>;
+  const KEEP_FROM = <?!= JSON.stringify(config.from) ?>;
+  const inScope = (e) => (state.scope !== 'spooky' || e.spooky) && e.date >= state.from && e.date <= state.to;
+
+  // Each option has a default date range; picking dates by hand overrides it until reset or the option changes.
+  function defaultRange() {
+    // Late-night events from yesterday stay listed until they end, so start at the earliest one shown.
+    const earliest = state.events.reduce((m, e) => (e.date < m ? e.date : m), ymd(TZ_TODAY));
+    const today = earliest > KEEP_FROM ? earliest : KEEP_FROM;
+    const last = state.events.reduce((m, e) => (e.date > m ? e.date : m), SEASON_END);
+    return [today, state.scope === 'all' ? last : SEASON_END];
+  }
+  function setRange(from, to) {
+    if (from && to && from > to) [from, to] = [to, from];
+    const [defFrom, defTo] = defaultRange();
+    state.from = from || defFrom;
+    state.to = to || defTo;
+    $('from').value = state.from; $('to').value = state.to;
+    $('from').min = $('to').min = defFrom;
+    $('resetDates').hidden = state.from === defFrom && state.to === defTo;
+  }
+  const $ = (id) => document.getElementById(id);
+
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function parse(ymdStr) { const [y, m, d] = ymdStr.split('-').map(Number); return new Date(y, m - 1, d, 12); }
+  function dayLabel(ymdStr) {
+    const d = parse(ymdStr);
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  }
+  function relLabel(ymdStr) {
+    const today = ymd(TZ_TODAY);
+    const tmr = new Date(TZ_TODAY); tmr.setDate(tmr.getDate() + 1);
+    if (ymdStr === today) return 'Today';
+    if (ymdStr === ymd(tmr)) return 'Tomorrow';
+    if (ymdStr.slice(5) === '10-31') return 'Halloween';
+    return '';
+  }
+  function thumb(id, w) { return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(id) + '&sz=w' + w; }
+
+  function render() {
+    renderChips();
+    const q = state.q.trim().toLowerCase();
+    const shown = state.events.filter((e) =>
+      (state.type === 'All' || e.type === state.type) &&
+      inScope(e) &&
+      (!q || [e.name, e.venue, e.description, e.type].join(' ').toLowerCase().includes(q)));
+
+    if (!shown.length) {
+      $('list').innerHTML = '<p class="empty">' + (state.events.length ? 'Nothing matches those filters.' : 'No events yet. Be the first to add one!') + '</p>';
+      return;
+    }
+    const days = [];
+    shown.forEach((e) => { const last = days[days.length - 1]; if (last && last.date === e.date) last.items.push(e); else days.push({ date: e.date, items: [e] }); });
+    $('list').innerHTML = days.map((d) => {
+      const rel = relLabel(d.date);
+      return '<section class="day" aria-labelledby="d-' + d.date + '"><h2 id="d-' + d.date + '">' + esc(dayLabel(d.date)) +
+        (rel ? ' <span class="rel">' + rel + '</span>' : '') +
+        ' <span class="count">(' + d.items.length + (d.items.length === 1 ? ' event' : ' events') + ')</span></h2><div class="grid">' + d.items.map(card).join('') + '</div></section>';
+    }).join('');
+  }
+
+  // Where the post came from, shown as a Font Awesome icon before the account name.
+  function creditHtml(e) {
+    // No link means it came from an uploaded photo (the name was read off the flier).
+    if (!/^https?:\/\//i.test(e.creditLink)) {
+      return '<i class="fa-solid fa-image" aria-hidden="true"></i> <span class="sr-only">From the flier: </span>' + esc(e.credit);
+    }
+    const host = e.creditLink.replace(/^https?:\/\/(www\.|m\.)?/i, '').split('/')[0].toLowerCase();
+    const [icon, site] = host.endsWith('instagram.com') ? ['fa-brands fa-instagram', 'Instagram']
+      : host.endsWith('facebook.com') ? ['fa-brands fa-facebook', 'Facebook']
+      : ['fa-solid fa-globe', 'Website'];
+    return '<a href="' + esc(e.creditLink) + '" target="_blank" rel="noopener">' +
+      '<i class="' + icon + '" aria-hidden="true"></i> <span class="sr-only">' + site + ': </span>' + esc(e.credit) +
+      '<span class="sr-only"> (opens in new tab)</span></a>';
+  }
+
+  function card(e) {
+    const flier = e.flierId
+      ? '<button class="flier" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img loading="lazy" src="' + thumb(e.flierId, 600) + '" alt=""></button>'
+      : '<div class="flier none" aria-hidden="true">🦇</div>';
+    const meta = esc(e.venue);
+    return '<article class="card">' + flier + '<div class="body">' +
+      (e.time ? '<div class="when">' + esc(e.time) + '</div>' : '') +
+      '<h3>' + esc(e.name) + '</h3>' +
+      (meta ? '<div class="meta">' + meta + '</div>' : '') +
+      '<div class="price"><span aria-hidden="true">🎟 </span>' + esc(e.price || 'Free') + '</div>' +
+      (e.ntaflof ? '<div class="ntaflof">No one turned away for lack of funds</div>' : '') +
+      (e.description ? '<p class="desc">' + esc(e.description) + '</p>' : '') +
+      (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') +
+      '<div class="foot"><button class="tag" type="button" data-tag="' + esc(e.type) + '" style="--c:' + typeColor(e.type) + '"' +
+      ' aria-pressed="' + (state.type === e.type) + '" aria-label="Show only ' + esc(e.type) + ' events">' +
+      (e.spooky ? '🎃 ' : '') + esc(e.type) + '</button>' +
+      (/^https?:\/\//i.test(e.link) ? '<a href="' + esc(e.link) + '" target="_blank" rel="noopener">Original post<span class="sr-only"> for ' + esc(e.name) + ' (opens in new tab)</span> ↗</a>' : '') +
+      '</div></div></article>';
+  }
+
+  function renderChips() {
+    const counts = {};
+    const scoped = state.events.filter(inScope);
+    scoped.forEach((e) => { counts[e.type] = (counts[e.type] || 0) + 1; });
+    if (state.type !== 'All' && !counts[state.type]) state.type = 'All';
+    const types = ['All'].concat(Object.keys(counts).sort((a, b) => counts[b] - counts[a]));
+    $('types').innerHTML = types.map((t) =>
+      '<button class="chip" type="button" data-type="' + esc(t) + '" aria-pressed="' + (state.type === t) + '"' +
+      (t === 'All' ? '>' : ' style="--c:' + typeColor(t) + '"><span class="dot" aria-hidden="true"></span>') + esc(t) +
+      '<span class="n">(' + (t === 'All' ? scoped.length : counts[t]) + ')</span></button>').join('');
+  }
+
+  // Invite-only mode: the code comes from the invite link once, then this browser remembers it.
+  const INVITE_KEY = 'hh-invite';
+  const store = {
+    get() { try { return localStorage.getItem(INVITE_KEY) || ''; } catch (err) { return ''; } },
+    set(v) { try { v ? localStorage.setItem(INVITE_KEY, v) : localStorage.removeItem(INVITE_KEY); } catch (err) { /* private mode */ } },
+  };
+  state.invite = <?!= JSON.stringify(config.invite || '') ?> || store.get();
+
+  function showLocked() {
+    document.querySelector('.controls').hidden = true;
+    $('openAdd').hidden = true;
+    $('list').innerHTML =
+      '<div class="locked"><h2>🔒 This list is invite-only</h2>' +
+      '<p>Ask a friend for the invite link. If you have the link or code, paste it here:</p>' +
+      '<form id="inviteForm" class="row"><label class="sr-only" for="inviteCode">Invite link or code</label>' +
+      '<input id="inviteCode" class="search" autocomplete="off" placeholder="Invite link or code">' +
+      '<button class="btn" type="submit">Let me in</button></form>' +
+      '<p class="status bad" id="inviteStatus" role="status"></p></div>';
+    $('inviteForm').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const raw = $('inviteCode').value.trim();
+      state.invite = (raw.match(/invite=([A-Za-z0-9]+)/) || [])[1] || raw;
+      state.triedCode = true;
+      load();
+    });
+  }
+
+  function load() {
+    google.script.run
+      .withSuccessHandler((res) => {
+        if (res.locked) {
+          store.set('');
+          const retry = state.triedCode;
+          showLocked();
+          if (retry) $('inviteStatus').textContent = "That invite didn't work. It may have been replaced with a new one.";
+          return;
+        }
+        if (state.invite) store.set(state.invite);
+        document.querySelector('.controls').hidden = false;
+        $('openAdd').hidden = false;
+        state.events = res.events;
+        setRange(state.custom && state.from, state.custom && state.to);
+        render();
+      })
+      .withFailureHandler(() => { $('list').innerHTML = '<p class="empty">Couldn\'t load events. Refresh to try again.</p>'; })
+      .getEvents(state.invite);
+  }
+
+  $('types').addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-type]'); if (!b) return;
+    // Clicking the active type again turns it off.
+    state.type = state.type === b.dataset.type ? 'All' : b.dataset.type;
+    render();
+    const active = $('types').querySelector('[data-type="' + CSS.escape(b.dataset.type) + '"]');
+    if (active) active.focus({ preventScroll: true });
+  });
+  $('scope').addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-scope]'); if (!b) return;
+    state.scope = b.dataset.scope;
+    $('scope').querySelectorAll('[data-scope]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+    state.custom = false;
+    setRange();
+    render();
+  });
+  ['from', 'to'].forEach((id) => $(id).addEventListener('change', () => {
+    state.custom = true;
+    setRange($('from').value, $('to').value);
+    render();
+  }));
+  $('resetDates').addEventListener('click', () => { state.custom = false; setRange(); render(); $('from').focus(); });
+  let t; $('q').addEventListener('input', (ev) => { clearTimeout(t); t = setTimeout(() => { state.q = ev.target.value; render(); }, 150); });
+
+  $('list').addEventListener('click', (ev) => {
+    const tag = ev.target.closest('[data-tag]');
+    if (tag) {
+      // Clicking the active type again clears the filter.
+      state.type = state.type === tag.dataset.tag ? 'All' : tag.dataset.tag;
+      render();
+      window.scrollTo({ top: $('list').offsetTop - document.querySelector('.controls').offsetHeight });
+      const chip = $('types').querySelector('[aria-pressed="true"]');
+      if (chip) { chip.scrollIntoView({ block: 'nearest', inline: 'nearest' }); chip.focus({ preventScroll: true }); }
+      return;
+    }
+    const b = ev.target.closest('[data-flier]'); if (!b) return;
+    const e = state.events.find((x) => x.flierId === b.dataset.flier);
+    $('lbImg').src = thumb(b.dataset.flier, 1600);
+    $('lbImg').alt = 'Flier for ' + (e ? e.name : 'event');
+    $('lightbox').showModal();
+  });
+  $('lbClose').addEventListener('click', () => $('lightbox').close());
+  $('lightbox').addEventListener('click', (ev) => { if (ev.target === $('lightbox')) $('lightbox').close(); });
+
+  $('openAdd').addEventListener('click', () => { $('status').textContent = ''; $('status').className = 'status'; $('addDlg').showModal(); $('f-url').focus(); });
+  $('closeAdd').addEventListener('click', () => $('addDlg').close());
+
+  async function shrink(file) {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+  }
+
+  $('addForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const f = ev.currentTarget;
+    const data = Object.fromEntries(new FormData(f).entries());
+    delete data.image;
+    data.credit = $('f-credit').checked ? 'on' : 'off';
+    data.invite = state.invite;
+    const file = $('f-img').files[0];
+    const status = $('status');
+    if (!data.url && !file && !(data.name && data.date)) {
+      status.className = 'status bad';
+      status.textContent = 'Add a link, a flier, or at least a name and date.';
+      return;
+    }
+    $('submitAdd').disabled = true;
+    status.className = 'status';
+    status.textContent = file || data.url ? 'Reading the flier… (takes ~15 seconds)' : 'Adding…';
+    try {
+      if (file) { data.imageBase64 = await shrink(file); data.mimeType = 'image/jpeg'; }
+    } catch (err) {
+      status.className = 'status bad'; status.textContent = 'Couldn\'t read that image. Try a screenshot (JPG or PNG).';
+      $('submitAdd').disabled = false; return;
+    }
+    google.script.run
+      .withSuccessHandler((res) => {
+        $('submitAdd').disabled = false;
+        if (res.locked) { $('addDlg').close(); showLocked(); return; }
+        status.className = 'status ' + (res.ok ? 'ok' : 'bad');
+        status.textContent = res.message;
+        if (res.ok) { f.reset(); load(); }
+      })
+      .withFailureHandler(() => {
+        $('submitAdd').disabled = false;
+        status.className = 'status bad'; status.textContent = 'Something went wrong. Try again in a minute.';
+      })
+      .submitFromPage(data);
+  });
+
+  load();
+</script>
+</body>
+</html>
