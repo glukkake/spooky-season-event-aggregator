@@ -92,6 +92,27 @@
   .chip[aria-pressed="true"] .dot { background: var(--accent-ink); }
   .chip .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: 1px; }
 
+  .seg.view { margin-left: auto; }
+  .tbl-wrap { overflow-x: auto; }
+  .tbl { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+  .tbl thead th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+                  padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .tbl td { padding: 10px; vertical-align: top; border-bottom: 1px solid var(--line); }
+  .tbl .dayrow th { text-align: left; font-size: 1.05rem; padding: 22px 10px 8px; border-bottom: 2px solid var(--line); }
+  .tbl .dayrow .rel { color: var(--accent); font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+  .tbl .dayrow .count { color: var(--muted); font-size: .85rem; font-weight: 600; }
+  .tbl .c-flier { width: 64px; }
+  .tbl .c-time { white-space: nowrap; color: var(--accent); font-weight: 700; }
+  .tbl .c-price { white-space: nowrap; }
+  .tbl .c-src { white-space: nowrap; }
+  .tbl .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .tbl .sub.one { max-width: 40ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tbl .sub.ok { color: #a8f0c6; }
+  .tbl tbody tr.ev-row:hover td { background: color-mix(in srgb, var(--panel) 70%, transparent); }
+  .mini { display: block; width: 48px; height: 60px; padding: 0; border: 1px solid var(--line); border-radius: var(--control-radius);
+          background: var(--panel-2); overflow: hidden; cursor: zoom-in; }
+  .mini img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .mini.none { display: grid; place-items: center; cursor: default; }
   .empty { text-align: center; color: var(--muted); padding: 60px 0; }
   .locked { max-width: 520px; margin: 48px auto; text-align: center; }
   .locked h2 { margin: 0 0 8px; }
@@ -129,7 +150,21 @@
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   /* On phones the filters are too tall to pin; let them scroll away with the page. */
-  @media (max-width: 600px) { .controls { position: static; } }
+  @media (max-width: 600px) {
+    .controls { position: static; }
+    .seg.view { margin-left: 0; }
+  }
+  @media (max-width: 860px) {
+    /* Too narrow for columns: the table becomes a compact list, thumbnail on the left, details stacked. */
+    .tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .tbl, .tbl tbody { display: block; }
+    .tbl .dayrow { display: block; }
+    .tbl .dayrow th { display: block; }
+    .tbl tr.ev-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); column-gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .tbl tr.ev-row td { display: block; padding: 1px 0; border: 0; }
+    .tbl .c-flier { grid-row: 1 / span 5; width: auto; }
+    .tbl .sub.one { white-space: normal; max-width: none; }
+  }
   @media (max-width: 480px) { .two { grid-template-columns: 1fr; } .grid { grid-template-columns: 1fr; gap: 14px; } }
   @media (prefers-reduced-motion: no-preference) { .card { transition: transform .15s; } .card:hover { transform: translateY(-2px); } }
 </style>
@@ -159,6 +194,10 @@
         <label for="from">From <input id="from" type="date"></label>
         <label for="to">To <input id="to" type="date"></label>
         <button class="linkbtn" id="resetDates" type="button" hidden>Reset dates</button>
+      </div>
+      <div class="seg view" id="view" role="group" aria-label="Layout">
+        <button type="button" data-view="cards" aria-pressed="true">▦ Cards</button>
+        <button type="button" data-view="table" aria-pressed="false">☰ Table</button>
       </div>
     </div>
     <div class="chips" id="types" role="group" aria-label="Filter by type"></div>
@@ -218,7 +257,9 @@
 
 <script>
   const TZ_TODAY = new Date();
-  const state = { events: [], type: 'All', scope: 'all', q: '', from: '', to: '', custom: false };
+  const state = { events: [], type: 'All', scope: 'all', q: '', from: '', to: '', custom: false, view: 'cards' };
+  // Layout choice is remembered on this device only.
+  try { if (localStorage.getItem('hh-view') === 'table') state.view = 'table'; } catch (err) { /* private mode */ }
   // Halloween colors first, then around the rainbow. All are light enough to read on the dark cards.
   const TYPE_COLORS = {
     'Dance party': '#ff8a3d',     // pumpkin
@@ -292,12 +333,13 @@
     }
     const days = [];
     shown.forEach((e) => { const last = days[days.length - 1]; if (last && last.date === e.date) last.items.push(e); else days.push({ date: e.date, items: [e] }); });
-    $('list').innerHTML = days.map((d) => {
-      const rel = relLabel(d.date);
-      return '<section class="day" aria-labelledby="d-' + esc(d.date) + '"><h2 id="d-' + esc(d.date) + '">' + esc(dayLabel(d.date)) +
-        (rel ? ' <span class="rel">' + rel + '</span>' : '') +
-        ' <span class="count">(' + d.items.length + (d.items.length === 1 ? ' event' : ' events') + ')</span></h2><div class="grid">' + d.items.map(card).join('') + '</div></section>';
-    }).join('');
+    if (state.view === 'table') {
+      $('list').innerHTML = renderTable(days);
+      return;
+    }
+    $('list').innerHTML = days.map((d) =>
+      '<section class="day" aria-labelledby="d-' + esc(d.date) + '"><h2 id="d-' + esc(d.date) + '">' + dayHeading(d) +
+      '</h2><div class="grid">' + d.items.map(card).join('') + '</div></section>').join('');
   }
 
   // Font Awesome Free 6.5.2 icons (CC BY 4.0, fontawesome.com/license/free), inlined so no CDN is needed.
@@ -322,6 +364,23 @@
       '<span class="sr-only"> (opens in new tab)</span></a>';
   }
 
+  function tagHtml(e) {
+    return '<button class="tag" type="button" data-tag="' + esc(e.type) + '" style="--c:' + typeColor(e.type) + '"' +
+      ' aria-pressed="' + (state.type === e.type) + '" aria-label="Show only ' + esc(e.type) + ' events">' +
+      (e.spooky ? '🎃 ' : '') + esc(e.type) + '</button>';
+  }
+
+  function postLink(e, label) {
+    return /^https?:\/\//i.test(e.link) ? '<a href="' + esc(e.link) + '" target="_blank" rel="noopener noreferrer">' + label +
+      '<span class="sr-only"> for ' + esc(e.name) + ' (opens in new tab)</span> ↗</a>' : '';
+  }
+
+  function dayHeading(d) {
+    const rel = relLabel(d.date);
+    return esc(dayLabel(d.date)) + (rel ? ' <span class="rel">' + rel + '</span>' : '') +
+      ' <span class="count">(' + d.items.length + (d.items.length === 1 ? ' event' : ' events') + ')</span>';
+  }
+
   function card(e) {
     const flier = e.flierId
       ? '<button class="flier" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img loading="lazy" src="' + thumb(e.flierId, 600) + '" alt=""></button>'
@@ -335,11 +394,31 @@
       (e.ntaflof ? '<div class="ntaflof">No one turned away for lack of funds</div>' : '') +
       (e.description ? '<p class="desc">' + esc(e.description) + '</p>' : '') +
       (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') +
-      '<div class="foot"><button class="tag" type="button" data-tag="' + esc(e.type) + '" style="--c:' + typeColor(e.type) + '"' +
-      ' aria-pressed="' + (state.type === e.type) + '" aria-label="Show only ' + esc(e.type) + ' events">' +
-      (e.spooky ? '🎃 ' : '') + esc(e.type) + '</button>' +
-      (/^https?:\/\//i.test(e.link) ? '<a href="' + esc(e.link) + '" target="_blank" rel="noopener noreferrer">Original post<span class="sr-only"> for ' + esc(e.name) + ' (opens in new tab)</span> ↗</a>' : '') +
-      '</div></div></article>';
+      '<div class="foot">' + tagHtml(e) + postLink(e, 'Original post') + '</div></div></article>';
+  }
+
+  function tableRow(e) {
+    const flier = e.flierId
+      ? '<button class="mini" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img loading="lazy" src="' + thumb(e.flierId, 160) + '" alt=""></button>'
+      : '<span class="mini none" aria-hidden="true">🦇</span>';
+    return '<tr class="ev-row">' +
+      '<td class="c-flier">' + flier + '</td>' +
+      '<td class="c-time">' + esc(e.time || '–') + '</td>' +
+      '<td class="c-event"><strong>' + esc(e.name) + '</strong>' +
+        (e.venue ? '<div class="sub">' + esc(e.venue) + '</div>' : '') +
+        (e.description ? '<div class="sub one">' + esc(e.description) + '</div>' : '') + '</td>' +
+      '<td class="c-type">' + tagHtml(e) + '</td>' +
+      '<td class="c-price">' + esc(e.price || 'Free') + (e.ntaflof ? '<div class="sub ok">No one turned away</div>' : '') + '</td>' +
+      '<td class="c-src">' + (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') + postLink(e, 'Post') + '</td>' +
+      '</tr>';
+  }
+
+  function renderTable(days) {
+    return '<div class="tbl-wrap"><table class="tbl"><caption class="sr-only">Events, grouped by day</caption><thead><tr>' +
+      '<th scope="col"><span class="sr-only">Flier</span></th><th scope="col">Time</th><th scope="col">Event</th>' +
+      '<th scope="col">Type</th><th scope="col">Price</th><th scope="col">Source</th></tr></thead>' +
+      days.map((d) => '<tbody><tr class="dayrow"><th scope="rowgroup" colspan="6">' + dayHeading(d) + '</th></tr>' +
+        d.items.map(tableRow).join('') + '</tbody>').join('') + '</table></div>';
   }
 
   function renderChips() {
@@ -409,6 +488,17 @@
     render();
     const active = $('types').querySelector('[data-type="' + CSS.escape(b.dataset.type) + '"]');
     if (active) active.focus({ preventScroll: true });
+  });
+  function syncView() {
+    $('view').querySelectorAll('[data-view]').forEach((x) => x.setAttribute('aria-pressed', x.dataset.view === state.view));
+  }
+  syncView();
+  $('view').addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-view]'); if (!b) return;
+    state.view = b.dataset.view;
+    try { localStorage.setItem('hh-view', state.view); } catch (err) { /* private mode */ }
+    syncView();
+    render();
   });
   $('scope').addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-scope]'); if (!b) return;

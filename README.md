@@ -13,6 +13,7 @@ It runs entirely in your own Google account (Google Sheets + Apps Script). No se
 - **Reads fliers for you.** Paste an Instagram, Facebook or event link, or upload a flier image. Claude pulls out the details and picks a type (dance party, workshop, burlesque, film, market…).
 - **One row per date.** A weekly movie night becomes four listings, one per Monday.
 - **A page people actually want to use.** Fliers grouped by day, color-coded type tags (click one to filter), search, a date range picker, and a 🎃 Spooky only / This Season / All events toggle.
+- **Cards or table.** Big flier cards by default, or a compact table (a short list on phones) for people who just want the details.
 - **Ordered by "get there by."** Within a day, events that end soonest come first, so people can plan a night of hopping.
 - **Late-night aware.** A 10pm–2am party stays listed until 2am, not until midnight.
 - **Price and NTAFLOF.** Every card shows the ticket price (or Free), and notes when no one is turned away for lack of funds.
