@@ -17,7 +17,9 @@ It runs entirely in your own Google account (Google Sheets + Apps Script). No se
 - **Discloses the AI.** The page footer notes that event details are read from fliers by AI, so people double-check the original post.
 - **Cards or table.** Big flier cards by default, or a compact table (a short list on phones) for people who just want the details.
 - **Ordered by "get there by."** Within a day, events that end soonest come first, so people can plan a night of hopping.
+- **Multi-day runs.** A haunted house or exhibit that runs "Oct 13 – Nov 2" is one listing with a *Runs through* date. Once it starts it's pinned under **Happening now** until it ends, so it's there whichever day you check.
 - **Late-night aware.** A 10pm–2am party stays listed until 2am, not until midnight.
+- **No flier? Still listed.** Events without an image get an emoji that matches their type.
 - **Price and NTAFLOF.** Every card shows the ticket price (or Free), and notes when no one is turned away for lack of funds.
 - **Credits the source.** Cards link back to the Instagram account, Facebook page or website that posted the event. People adding events can opt out.
 - **Anyone can add events** from the page, no Google account needed. Duplicates are caught automatically.

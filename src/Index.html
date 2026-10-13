@@ -103,7 +103,7 @@
   .tbl .dayrow .rel { color: var(--accent); font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
   .tbl .dayrow .count { color: var(--muted); font-size: .85rem; font-weight: 600; }
   .tbl .c-flier { width: 64px; }
-  .tbl .c-time { white-space: nowrap; color: var(--accent); font-weight: 700; }
+  .tbl .c-time { max-width: 16ch; color: var(--accent); font-weight: 700; }
   .tbl .c-price { white-space: nowrap; }
   .tbl .c-src { white-space: nowrap; }
   .tbl .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
@@ -255,6 +255,8 @@
         <div><label for="f-date">Date</label><input id="f-date" name="date" type="date" min="<?= config.from ?>"></div>
         <div><label for="f-time">Time</label><input id="f-time" name="time" placeholder="9pm"></div>
       </div>
+      <label for="f-through">Runs through <span class="opt">(only for multi-day runs, like an exhibit or haunted house)</span></label>
+      <input id="f-through" name="runsThrough" type="date" min="<?= config.from ?>">
       <label for="f-venue">Venue</label>
       <input id="f-venue" name="venue" maxlength="120">
       <label for="f-type">Type</label>
@@ -309,16 +311,24 @@
     'Other': '#a9a3b5',           // ghost gray
   };
   const typeColor = (t) => TYPE_COLORS[t] || TYPE_COLORS.Other;
+  // Shown in place of the flier when an event has no image.
+  const TYPE_EMOJI = {
+    'Dance party': '🪩', 'Costume contest': '🎃', 'Drag': '👑', 'Burlesque': '💃', 'Film': '🎬', 'Music show': '🎸',
+    'Theater': '🎭', 'Art show': '🎨', 'Comedy': '🎤', 'Workshop': '✂️', 'Market': '🛍️', 'Community': '🤝',
+    'Fundraiser': '💝', 'Kids & family': '🧸', 'Other': '🦇',
+  };
+  const typeEmoji = (t) => TYPE_EMOJI[t] || TYPE_EMOJI.Other;
   const SEASON_END = <?!= jsonForScript_(config.seasonEnd) ?>;
   const KEEP_FROM = <?!= jsonForScript_(config.from) ?>;
-  const inScope = (e) => (state.scope !== 'spooky' || e.spooky) && e.date >= state.from && e.date <= state.to;
+  const inScope = (e) => (state.scope !== 'spooky' || e.spooky) && (e.runsThrough || e.date) >= state.from && e.date <= state.to;
 
   // Each option has a default date range; picking dates by hand overrides it until reset or the option changes.
   function defaultRange() {
     // Late-night events from yesterday stay listed until they end, so start at the earliest one shown.
-    const earliest = state.events.reduce((m, e) => (e.date < m ? e.date : m), ymd(TZ_TODAY));
+    // (Multi-day runs that began earlier don't pull the start date back; they overlap today anyway.)
+    const earliest = state.events.reduce((m, e) => (!e.runsThrough && e.date < m ? e.date : m), ymd(TZ_TODAY));
     const today = earliest > KEEP_FROM ? earliest : KEEP_FROM;
-    const last = state.events.reduce((m, e) => (e.date > m ? e.date : m), SEASON_END);
+    const last = state.events.reduce((m, e) => ((e.runsThrough || e.date) > m ? (e.runsThrough || e.date) : m), SEASON_END);
     return [today, state.scope === 'all' ? last : SEASON_END];
   }
   function setRange(from, to) {
@@ -361,8 +371,12 @@
       $('list').innerHTML = '<p class="empty">' + (state.events.length ? 'Nothing matches those filters.' : 'No events yet. Be the first to add one!') + '</p>';
       return;
     }
+    const today = ymd(TZ_TODAY);
+    const underWay = (e) => e.runsThrough && e.date <= today;
     const days = [];
-    shown.forEach((e) => { const last = days[days.length - 1]; if (last && last.date === e.date) last.items.push(e); else days.push({ date: e.date, items: [e] }); });
+    const ongoing = shown.filter(underWay).sort((a, b) => a.runsThrough.localeCompare(b.runsThrough)); // ending soonest first
+    if (ongoing.length) days.push({ date: 'ongoing', ongoing: true, items: ongoing });
+    shown.filter((e) => !underWay(e)).forEach((e) => { const last = days[days.length - 1]; if (last && last.date === e.date) last.items.push(e); else days.push({ date: e.date, items: [e] }); });
     if (state.view === 'table') {
       $('list').innerHTML = renderTable(days);
       return;
@@ -411,7 +425,21 @@
       '<span class="sr-only"> for ' + esc(e.name) + ' (opens in new tab)</span> ↗</a>' : '';
   }
 
+  function shortDate(ymdStr) {
+    return parse(ymdStr).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  // "Through Mon, Nov 2 · 7pm – 11pm" for a run under way; "7pm · runs through Mon, Nov 2" before it starts.
+  function whenText(e) {
+    if (!e.runsThrough) return e.time || '';
+    return e.date <= ymd(TZ_TODAY)
+      ? 'Through ' + shortDate(e.runsThrough) + (e.time ? ' · ' + e.time : '')
+      : (e.time ? e.time + ' · ' : '') + 'Runs through ' + shortDate(e.runsThrough);
+  }
+
   function dayHeading(d) {
+    if (d.ongoing) {
+      return 'Happening now <span class="count">(' + d.items.length + ' ongoing)</span>';
+    }
     const rel = relLabel(d.date);
     return esc(dayLabel(d.date)) + (rel ? ' <span class="rel">' + rel + '</span>' : '') +
       ' <span class="count">(' + d.items.length + (d.items.length === 1 ? ' event' : ' events') + ')</span>';
@@ -420,10 +448,10 @@
   function card(e) {
     const flier = e.flierId
       ? '<button class="flier" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img loading="lazy" src="' + thumb(e.flierId, 600) + '" alt=""></button>'
-      : '<div class="flier none" aria-hidden="true">🦇</div>';
+      : '<div class="flier none" aria-hidden="true">' + typeEmoji(e.type) + '</div>';
     const meta = esc(e.venue);
     return '<article class="card">' + flier + '<div class="body">' +
-      (e.time ? '<div class="when">' + esc(e.time) + '</div>' : '') +
+      (whenText(e) ? '<div class="when">' + esc(whenText(e)) + '</div>' : '') +
       '<h3>' + esc(e.name) + '</h3>' +
       (meta ? '<div class="meta">' + meta + '</div>' : '') +
       '<div class="price"><span aria-hidden="true">🎟 </span>' + priceText(e) + '</div>' +
@@ -436,10 +464,10 @@
   function tableRow(e) {
     const flier = e.flierId
       ? '<button class="mini" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img loading="lazy" src="' + thumb(e.flierId, 160) + '" alt=""></button>'
-      : '<span class="mini none" aria-hidden="true">🦇</span>';
+      : '<span class="mini none" aria-hidden="true">' + typeEmoji(e.type) + '</span>';
     return '<tr class="ev-row">' +
       '<td class="c-flier">' + flier + '</td>' +
-      '<td class="c-time">' + esc(e.time || '–') + '</td>' +
+      '<td class="c-time">' + esc(whenText(e) || '–') + '</td>' +
       '<td class="c-event"><strong>' + esc(e.name) + '</strong>' +
         (e.venue ? '<div class="sub">' + esc(e.venue) + '</div>' : '') +
         (e.description ? '<div class="sub one">' + esc(e.description) + '</div>' : '') + '</td>' +

@@ -91,7 +91,7 @@ function ensureSettingsSheet_(ss) {
 
 const EVENT_COLS = [
   'Flier', 'Date', 'Day', 'Time', 'Event', 'Type', 'Spooky', 'Venue', 'Price',
-  'Description', 'Link', 'Added by', 'Added', 'Status', 'Flier ID', 'Start', 'Key', 'Arrive by', 'NTAFLOF', 'Credit', 'Credit link',
+  'Description', 'Link', 'Added by', 'Added', 'Status', 'Flier ID', 'Start', 'Key', 'Arrive by', 'NTAFLOF', 'Credit', 'Credit link', 'Runs through',
 ];
 const SKIPPED_COLS = ['Added', 'Link', 'Reason', 'Event', 'Date', 'Added by', 'Flier'];
 const INBOX_COLS = ['Paste an event link here', 'Note (optional)', 'Your name (optional)', 'Result'];
@@ -278,6 +278,8 @@ function doPost(e) {
     if (body.action === 'unskip') return json_(unskipOutsideWindow_());
     if (body.action === 'refresh') return json_(refreshDetails_(body));
     if (body.action === 'credit') return json_(setCredit_(body));
+    // Key-holder only: re-import a post from scratch (e.g. it was first added as a bare link).
+    if (body.replace === true && body.url) removeByLink_(cleanUrl_(body.url));
     return json_(processSubmission_(body));
   } catch (err) {
     console.error(err);
@@ -315,6 +317,7 @@ function submitFromPage(form) {
   const manual = {
     name: clip_(form.name, 120), date: clip_(form.date, 10), time: clip_(form.time, 40),
     venue: clip_(form.venue, 120), type: clip_(form.type, 40), description: clip_(form.description, 300),
+    runsThrough: clip_(form.runsThrough, 10),
   };
   try {
     return processSubmission_({
@@ -361,8 +364,10 @@ function getEvents_() {
       ntaflof: Boolean(r[C.NTAFLOF - 1]),
       credit: String(r[C.Credit - 1]),
       creditLink: String(r[C['Credit link'] - 1]),
+      runsThrough: dateCell_(r[C['Runs through'] - 1]),
       arriveBy: String(r[C['Arrive by'] - 1]) || '99:99',
     }))
+    .map((ev) => { if (ev.runsThrough <= ev.date) ev.runsThrough = ''; return ev; })
     .filter((ev) => ev.name && ev.status !== 'hidden' && endsAt_(ev) > now)
     .sort((a, b) => (a.date + a.arriveBy + a.start).localeCompare(b.date + b.arriveBy + b.start));
 }
@@ -459,9 +464,10 @@ function processSubmission_(sub) {
     ev.start_time = validTime_(ev.start_time);
     ev.end_time = validTime_(ev.end_time);
     if (!CONFIG.TYPES.includes(ev.type)) ev.type = 'Other';
+    ev.end_date = validRunEnd_(ev.date, manual.runsThrough || ev.end_date);
     if (manual.name) ev.name = manual.name;
     if (manual.type && CONFIG.TYPES.includes(manual.type)) ev.type = manual.type;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(ev.date) && ev.date >= CONFIG.KEEP_FROM) kept.push(ev);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ev.date) && (ev.end_date || ev.date) >= CONFIG.KEEP_FROM) kept.push(ev);
     else outside.push(ev);
   });
 
@@ -486,7 +492,8 @@ function processSubmission_(sub) {
   }
   const first = kept[0];
   const more = kept.length > 1 ? ` (+${kept.length - 1} more date${kept.length > 2 ? 's' : ''})` : '';
-  return { ok: true, status: 'added', message: `Added: ${first.name}, ${prettyDate_(first.date)}${first.start_time ? ' ' + prettyTime_(first.start_time) : ''}${more}${first.spooky ? ' 🎃' : ''}` };
+  const through = first.end_date ? ' through ' + prettyDate_(first.end_date) : '';
+  return { ok: true, status: 'added', message: `Added: ${first.name}, ${prettyDate_(first.date)}${through}${first.start_time ? ' ' + prettyTime_(first.start_time) : ''}${more}${first.spooky ? ' 🎃' : ''}` };
 }
 
 function appendEvents_(events, url, addedBy, flierId, credit) {
@@ -517,6 +524,7 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
     row[C.Start - 1] = cell_(ev.start_time || '99:99');
     row[C.Key - 1] = url ? cell_(url + '#' + ev.date) : '';
     row[C['Arrive by'] - 1] = cell_(arriveBy_(ev.start_time, ev.end_time));
+    row[C['Runs through'] - 1] = ev.end_date || '';
     row[C.Credit - 1] = credit ? cell_(credit.name) : '';
     row[C['Credit link'] - 1] = credit && /^https?:\/\//.test(credit.link) ? cell_(credit.link) : '';
     return row;
@@ -526,6 +534,7 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
   sheet.getRange(start, C.Start, rows.length, 1).setNumberFormat('@');
   sheet.getRange(start, C['Arrive by'], rows.length, 1).setNumberFormat('@');
   sheet.getRange(start, C.Price, rows.length, 1).setNumberFormat('@');
+  sheet.getRange(start, C['Runs through'], rows.length, 1).setNumberFormat('@');
   sheet.getRange(start, 1, rows.length, EVENT_COLS.length).setValues(rows);
   sheet.setRowHeights(start, rows.length, 150);
   sortEvents_();
@@ -556,6 +565,7 @@ function readEventRows_(sheet) {
     row: i + 2,
     date: r[C.Date - 1] instanceof Date ? Utilities.formatDate(r[C.Date - 1], CONFIG.TZ, 'yyyy-MM-dd') : String(r[C.Date - 1]),
     name: String(r[C.Event - 1]),
+    link: String(r[C.Link - 1]),
     venue: String(r[C.Venue - 1]),
     status: String(r[C.Status - 1]),
     time: r[C.Time - 1],
@@ -604,7 +614,8 @@ function cleanUp_() {
   });
   const live = rows.filter((r) => r.status !== 'hidden' && r.name);
   live.forEach((r, i) => {
-    const dupOf = live.slice(0, i).find((o) => !o.dupe && o.date === r.date && sameEvent_(o.name, r.name));
+    // Two listings from the same post are separate events (a show and its after-party), never duplicates.
+    const dupOf = live.slice(0, i).find((o) => !o.dupe && o.date === r.date && !(o.link && o.link === r.link) && sameEvent_(o.name, r.name));
     if (!dupOf) return;
     // Keep whichever listing has more detail.
     const loser = (r.venue && !dupOf.venue) ? dupOf : r;
@@ -655,6 +666,37 @@ function refreshDetails_(sub) {
   });
   const ev = extracted.events[0] || {};
   return { ok: true, message: `updated ${updated} row(s): ${ev.price || 'Unknown'}${ev.ntaflof ? ' · NTAFLOF' : ''}` };
+}
+
+/** Removes a post's rows from Events and Skipped. Fliers no other row uses go to Drive trash (recoverable). */
+function removeByLink_(url) {
+  if (!url) return;
+  const ss = getSpreadsheet_();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const events = ss.getSheetByName(SHEETS.EVENTS);
+    const fliers = [];
+    if (events.getLastRow() > 1) {
+      const rows = events.getRange(2, 1, events.getLastRow() - 1, EVENT_COLS.length).getValues();
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (String(rows[i][C.Link - 1]) !== url) continue;
+        if (rows[i][C['Flier ID'] - 1]) fliers.push(String(rows[i][C['Flier ID'] - 1]));
+        events.deleteRow(i + 2);
+      }
+    }
+    const stillUsed = columnValues_(events, C['Flier ID']);
+    fliers.filter((id, i) => fliers.indexOf(id) === i && !stillUsed.includes(id)).forEach((id) => {
+      try { DriveApp.getFileById(id).setTrashed(true); } catch (err) { /* already gone */ }
+    });
+    const skipped = ss.getSheetByName(SHEETS.SKIPPED);
+    if (skipped.getLastRow() > 1) {
+      const links = columnValues_(skipped, 2);
+      for (let i = links.length - 1; i >= 0; i--) if (links[i] === url) skipped.deleteRow(i + 2);
+    }
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** Fills Credit / Credit link on an already-imported post's rows. Body: {url, name, link} */
@@ -802,7 +844,8 @@ function saveFlier_(blob) {
   // Re-encode so nothing hidden inside or after the image data is stored. (Same-format
   // getAs() returns the original bytes, so convert PNG -> JPEG and everything else -> PNG.)
   try {
-    blob = validImage_(blob.getContentType() === 'image/png' ? blob.getAs('image/jpeg') : blob.getAs('image/png'));
+    // The upload cap applies to what comes in; a re-encoded PNG of a detailed flier is often bigger.
+    blob = validImage_(blob.getContentType() === 'image/png' ? blob.getAs('image/jpeg') : blob.getAs('image/png'), 30 * 1024 * 1024);
   } catch (err) {
     blob = null;
   }
@@ -831,10 +874,11 @@ const EVENT_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'date', 'start_time', 'end_time', 'venue', 'price', 'ntaflof', 'host', 'type', 'spooky', 'description'],
+        required: ['name', 'date', 'end_date', 'start_time', 'end_time', 'venue', 'price', 'ntaflof', 'host', 'type', 'spooky', 'description'],
         properties: {
           name: { type: 'string' },
           date: { type: 'string' },
+          end_date: { type: 'string' },
           start_time: { type: 'string' },
           end_time: { type: 'string' },
           venue: { type: 'string' },
@@ -863,7 +907,8 @@ function extractEvents_({ image, caption, title, url, note, postedAt, manual }) 
     'Rules:',
     '- is_event is false for things that are not something the public can attend: product drops, shop openings, ads, memes, calls for auditions or vendors with no public event date.',
     '- If the post is a vendor/performer call but names a public event with a date, record that public event.',
-    '- One entry per date. A weekly or multi-day series becomes one entry per date (at most 10).',
+    '- One entry per date. A weekly series or a set of listed dates becomes one entry per date (at most 10), each with end_date "".',
+    '- Exception: a continuous run given only as a date range with no specific dates listed (an exhibition, haunted house, installation or festival "Oct 13 - Nov 2") is ONE entry: date = first day, end_date = last day (YYYY-MM-DD).',
     '- date: YYYY-MM-DD. If the year is missing, use the next occurrence on or after the post date.',
     '- start_time / end_time: 24-hour HH:MM, or "" if not stated. "Doors 8" means start_time 20:00.',
     '- venue: venue name plus street address if shown.',
@@ -924,7 +969,7 @@ function manualToEvent_(m) {
     start = `${String(h).padStart(2, '0')}:${t[2] || '00'}`;
   }
   return {
-    name: m.name, date: m.date, start_time: start, end_time: '', venue: m.venue || '', price: '', ntaflof: false, host: '',
+    name: m.name, date: m.date, start_time: start, end_time: '', venue: m.venue || '', price: '', ntaflof: false, host: '', end_date: '',
     type: CONFIG.TYPES.includes(m.type) ? m.type : 'Other', spooky: true, description: m.description || '',
   };
 }
@@ -943,10 +988,29 @@ function endsAt_(ev) {
   const [from, to] = String(ev.time).split(/\s*[–-]\s*/);
   const start = to24_(from);
   const end = to24_(to);
-  const [y, m, d] = ev.date.split('-').map(Number);
+  const lastDay = ev.runsThrough || ev.date; // a multi-day run stays listed through its last day
+  const [y, m, d] = lastDay.split('-').map(Number);
   const nextDay = Utilities.formatDate(new Date(y, m - 1, d + 1, 12), CONFIG.TZ, 'yyyy-MM-dd');
-  if (end) return (start && end < start ? nextDay : ev.date) + ' ' + end;
+  if (end) return (start && end < start ? nextDay : lastDay) + ' ' + end;
   return nextDay + ' ' + NO_END_GRACE;
+}
+
+/** A run's last day: must be a real date after the first day and within 6 months of it, else "". */
+function validRunEnd_(start, end) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(end))) return '';
+  const days = (new Date(end + 'T12:00:00Z') - new Date(start + 'T12:00:00Z')) / 86400000;
+  return days >= 1 && days <= 184 ? end : '';
+}
+
+/** Reads a date the owner may have typed in several ways ("2026-11-02", "11/2/2026", "11/2", a real date cell). */
+function dateCell_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, CONFIG.TZ, 'yyyy-MM-dd');
+  const t = String(v || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if (!m) return '';
+  const year = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : CONFIG.KEEP_FROM.slice(0, 4);
+  return year + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');
 }
 
 /**
@@ -1061,10 +1125,10 @@ function cell_(v) {
 }
 
 /** Accepts only real JPEG/PNG/GIF/WebP bytes under the size cap; returns a blob typed by its contents. */
-function validImage_(blob) {
+function validImage_(blob, maxBytes) {
   if (!blob) return null;
   const b = blob.getBytes();
-  if (!b.length || b.length > CONFIG.MAX_IMAGE_BYTES) return null;
+  if (!b.length || b.length > (maxBytes || CONFIG.MAX_IMAGE_BYTES)) return null;
   const u = (i) => b[i] & 0xff;
   const ascii = (from, to) => String.fromCharCode.apply(null, b.slice(from, to).map((x) => x & 0xff));
   let type = '';
