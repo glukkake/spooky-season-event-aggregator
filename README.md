@@ -84,6 +84,8 @@ The page runs as you, so it was built defensively:
 - **No tracking.** No analytics, cookies, or "phone home": nothing about you or your visitors is sent to the author of this project.
 - **No third-party scripts or fonts.** Icons are built into the page and the title font is embedded. Visitors' browsers only talk to Google, which hosts the app and the flier images.
 - **What leaves your Google account:** flier images and captions go to Anthropic's Claude API (using your key) to be read. Shared links are fetched by Google's servers to find the flier.
+- **Fliers aren't used to train AI.** Images and captions are sent to Anthropic's Claude API under its commercial terms, which don't use API inputs or outputs to train models unless the API account owner opts in. Anthropic deletes API inputs and outputs within 30 days; content flagged by its automated safety systems can be kept longer. See [API and data retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention) and [how long Anthropic stores data](https://privacy.anthropic.com/en/articles/7996866-how-long-do-you-store-personal-data). If you run a copy, check your own Anthropic Console account's data settings.
+- **Where fliers are stored:** a re-saved copy of each listed event's flier goes in a folder in your Google Drive, shared as a view-only link so the page can show it. Fliers for posts that aren't events, or that fall outside your season, aren't kept.
 - **Names are optional.** The "Your name" field on the add form is only visible in your sheet, never on the public page.
 
 Found a hole? Please report it privately through GitHub's **Security → Report a vulnerability** on this repo rather than a public issue.

@@ -119,6 +119,8 @@
   .statusbar .linkbtn { font-size: 13px; }
   .newver { color: var(--focus); font-weight: 600; }
   .newver a { color: var(--focus); }
+  .field-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+  .field-note a { color: var(--accent); }
   .site-foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
   .site-foot p { margin: 0; max-width: 70ch; }
   .site-foot a { color: var(--muted); }
@@ -232,7 +234,8 @@
   <main id="list" aria-live="polite"><p class="empty">Summoning events…</p></main>
 
   <footer class="site-foot">
-    <p><?!= config.footerHtml ?>Event details are read from fliers by AI, so double-check the original post before you go.</p>
+    <p><?!= config.footerHtml ?>Event details are read from fliers by AI, so double-check the original post before you go.
+      Uploaded fliers are not used to train AI. <a href="https://github.com/glukkake/spooky-season-event-aggregator#privacy" target="_blank" rel="noopener noreferrer">How images are handled<span class="sr-only"> (opens in new tab)</span></a></p>
   </footer>
 </div>
 
@@ -245,7 +248,9 @@
     <input id="f-url" name="url" type="url" inputmode="url" placeholder="https://www.instagram.com/p/…">
 
     <label for="f-img">Flier image <span class="opt">(screenshot works)</span></label>
-    <input id="f-img" name="image" type="file" accept="image/*">
+    <input id="f-img" name="image" type="file" accept="image/*" aria-describedby="f-img-note">
+    <p class="field-note" id="f-img-note">Fliers are read by Claude AI to fill in the details and are not used to train AI.
+      <a href="https://github.com/glukkake/spooky-season-event-aggregator#privacy" target="_blank" rel="noopener noreferrer">How images are handled<span class="sr-only"> (opens in new tab)</span></a></p>
 
     <details>
       <summary>Type in details</summary>
