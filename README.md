@@ -12,7 +12,8 @@ It runs entirely in your own Google account (Google Sheets + Apps Script). No se
 
 - **Reads fliers for you.** Paste an Instagram, Facebook or event link, or upload a flier image. Claude pulls out the details and picks a type (dance party, workshop, burlesque, film, market…).
 - **One row per date.** A weekly movie night becomes four listings, one per Monday.
-- **A page people actually want to use.** Fliers grouped by day, color-coded type tags (click one to filter), search, a date range picker, and a 🎃 Spooky only / This Season / All events toggle.
+- **A page people actually want to use.** Fliers grouped by day, color-coded type tags (click one to filter), search, a date range picker, and a 🎃 Spooky only / All events toggle.
+- **Stays in season.** Nothing dated after your season's end (set in the Settings tab) is listed or added, so the list stays Halloween-focused.
 - **Stays fresh as a Home Screen app.** Events refresh when the app comes back to the foreground and every few minutes, with a Refresh button, and open copies offer a Reload when a new version is deployed.
 - **Discloses the AI.** The page footer notes that event details are read from fliers by AI, so people double-check the original post.
 - **Cards or table.** Big flier cards by default, or a compact table (a short list on phones) for people who just want the details.
@@ -64,7 +65,8 @@ Instagram and Facebook often won't show a post's caption to outside servers. A s
 
 Everything is in the **🎃 Events** menu and the sheet itself:
 
-- **Fix a listing:** edit its row. To remove one from the page, set **Status** to `hidden`.
+- **Fix a listing from the page:** **🎃 Events → ✏️ My edit link** gives you a private link. Open it once on each of your devices and every listing gets an **✏️ Edit** button (name, date, time, venue, price, type, description, or hide it). Only browsers that opened your edit link see it; **🔁 Replace my edit link** cuts off old ones.
+- **Or fix it in the sheet:** edit its row. To remove one from the page, set **Status** to `hidden`.
 - **Edited a time?** Run **Tidy up** so it re-sorts.
 - **Invite-only:** **🔒 Lock page** gives you an invite link. **🔁 New invite link** cuts off the old one. **🔓 Unlock page** makes it public again.
 - **Skipped tab:** posts that weren't events, or were dated before your season, land here so nothing is silently lost.
@@ -89,6 +91,7 @@ Contributors raised good questions about how this app uses AI, what happens to t
 
 - **It only reads.** When an event is added, Claude (an AI model made by Anthropic) reads the words on the flier and post (the event name, date, time, venue and price) and fills in the listing. That is the only thing AI does in this app.
 - **It never makes or changes art.** No images are generated, edited or restyled. The fliers shown are the original art, credited and linked to whoever posted them.
+- **The smallest model.** Fliers are read with Claude Haiku, the smallest and most efficient Claude model.
 - **Browsing uses no AI.** Each flier is read once, when its event is added, as one short request. Anthropic doesn't publish energy figures for individual requests, so there's no exact number to share.
 - **It's explained in the app too.** A **How AI is used here** panel is linked from the add form and the page footer.
 

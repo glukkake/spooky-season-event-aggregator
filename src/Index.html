@@ -121,6 +121,10 @@
   .newver a { color: var(--focus); }
   .field-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
   .field-note .linkbtn, .site-foot .linkbtn { font-size: 13px; padding: 0; }
+  .linkbtn.edit { align-self: flex-start; font-size: 13px; padding: 6px 0 0; }
+  .tbl .linkbtn.edit { display: block; }
+  .editmode { color: var(--focus); font-weight: 600; }
+  .editmode .linkbtn { font-size: 13px; }
   .linkbtn.rm { align-self: flex-start; font-size: 12px; font-weight: 400; color: var(--muted); padding: 6px 0 0; }
   .linkbtn.rm:hover { color: var(--accent); }
   .tbl .linkbtn.rm { display: block; }
@@ -217,7 +221,6 @@
     <div class="row dates">
       <div class="seg" id="scope" role="group" aria-label="Which events">
         <button type="button" data-scope="spooky" aria-pressed="false">🎃 Spooky only</button>
-        <button type="button" data-scope="season" aria-pressed="false">This Season</button>
         <button type="button" data-scope="all" aria-pressed="true">All events</button>
       </div>
       <div class="row" role="group" aria-label="Date range">
@@ -237,6 +240,7 @@
     <span id="updated" class="updated"></span>
     <button class="linkbtn" id="refresh" type="button">↻ Refresh</button>
     <span id="newVersion" class="newver" hidden>A new version is available. <a id="reloadLink" href="#">Reload</a></span>
+    <span id="editMode" class="editmode" hidden>✏️ Edit mode is on in this browser. <button class="linkbtn" id="editOff" type="button">Turn off</button></span>
   </div>
   <main id="list" aria-live="polite"><p class="empty">Summoning events…</p></main>
 
@@ -304,12 +308,43 @@
     <h3>Is the art used to train AI?</h3>
     <p>No. Fliers are sent to Anthropic's API, whose terms don't use them to train AI models, and Anthropic deletes them within 30 days. The copy this app keeps is stored privately in the list owner's Google Drive and is only ever shown inside this app, never at a public web address. Invite-only lists can only be seen by people with the invite link.</p>
     <h3>Energy use</h3>
-    <p>Each flier is read once, when its event is added, as one short request. Browsing the list doesn't use AI at all. Anthropic doesn't publish energy figures for individual requests, so we can't give an exact number.</p>
+    <p>Fliers are read with Claude Haiku, the smallest and most efficient Claude model. Each flier is read once, when its event is added, as one short request. Browsing the list doesn't use AI at all. Anthropic doesn't publish energy figures for individual requests, so we can't give an exact number.</p>
     <h3>Artists and organizers</h3>
     <p>Want your event or art taken down? Use <strong>Request removal</strong> on the listing and it comes down right away.</p>
     <p class="more"><a href="https://github.com/glukkake/spooky-season-event-aggregator#ai-art-and-privacy" target="_blank" rel="noopener noreferrer">More about privacy and how images are handled<span class="sr-only"> (opens in new tab)</span> ↗</a></p>
     <div class="actions"><button class="btn" type="button" id="aiClose">Close</button></div>
   </div>
+</dialog>
+
+<dialog id="editDlg" aria-labelledby="editTitle">
+  <form class="dlg" id="editForm" method="dialog">
+    <h2 id="editTitle">Edit listing</h2>
+    <label for="e-name">Event name</label>
+    <input id="e-name" name="name" maxlength="200" required>
+    <div class="two">
+      <div><label for="e-date">Date</label><input id="e-date" name="date" type="date" required></div>
+      <div><label for="e-time">Time</label><input id="e-time" name="time" maxlength="40" placeholder="7pm – 11pm"></div>
+    </div>
+    <label for="e-through">Runs through <span class="opt">(only for multi-day runs)</span></label>
+    <input id="e-through" name="runsThrough" type="date">
+    <label for="e-venue">Venue</label>
+    <input id="e-venue" name="venue" maxlength="200">
+    <div class="two">
+      <div><label for="e-price">Price</label><input id="e-price" name="price" maxlength="80" placeholder="Unknown"></div>
+      <div><label for="e-type">Type</label>
+        <select id="e-type" name="type"><? config.types.forEach(function (t) { ?><option><?= t ?></option><? }); ?></select></div>
+    </div>
+    <label for="e-desc">Description</label>
+    <textarea id="e-desc" name="description" maxlength="400"></textarea>
+    <label class="check" for="e-spooky"><input id="e-spooky" name="spooky" type="checkbox"> 🎃 Spooky (Halloween-themed)</label>
+    <label class="check" for="e-ntaflof"><input id="e-ntaflof" name="ntaflof" type="checkbox"> No one turned away for lack of funds</label>
+    <label class="check" for="e-hidden"><input id="e-hidden" name="hidden" type="checkbox"> Hide from the list</label>
+    <p class="status" id="editStatus" role="status"></p>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="editCancel">Cancel</button>
+      <button class="btn" type="submit" id="editSave">Save</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="rmDlg" aria-labelledby="rmTitle">
@@ -376,16 +411,16 @@
     // (Multi-day runs that began earlier don't pull the start date back; they overlap today anyway.)
     const earliest = state.events.reduce((m, e) => (!e.runsThrough && e.date < m ? e.date : m), ymd(TZ_TODAY));
     const today = earliest > KEEP_FROM ? earliest : KEEP_FROM;
-    const last = state.events.reduce((m, e) => ((e.runsThrough || e.date) > m ? (e.runsThrough || e.date) : m), SEASON_END);
-    return [today, state.scope === 'all' ? last : SEASON_END];
+    return [today, SEASON_END]; // the list stops at the season end
   }
   function setRange(from, to) {
     if (from && to && from > to) [from, to] = [to, from];
     const [defFrom, defTo] = defaultRange();
     state.from = from || defFrom;
-    state.to = to || defTo;
+    state.to = to && to < SEASON_END ? to : defTo;
     $('from').value = state.from; $('to').value = state.to;
     $('from').min = $('to').min = defFrom;
+    $('from').max = $('to').max = SEASON_END;
     $('resetDates').hidden = state.from === defFrom && state.to === defTo;
   }
   const $ = (id) => document.getElementById(id);
@@ -422,7 +457,7 @@
       const job = flierQueue.shift();
       fliersInFlight++;
       const done = (url) => { fliersInFlight--; job.resolve(url || ''); pumpFliers(); };
-      google.script.run.withSuccessHandler(done).withFailureHandler(() => done('')).getFlier(job.id, job.size, state.invite);
+      google.script.run.withSuccessHandler(done).withFailureHandler(() => done('')).getFlier(job.id, job.size, state.invite, state.edit);
     }
   }
   const flierObserver = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
@@ -494,6 +529,10 @@
     return !p || /^unknown$/i.test(p) ? '<span class="unknown">Price unknown</span>' : esc(p);
   }
 
+  function editBtn(e) {
+    return state.isEditor ? '<button class="linkbtn edit" type="button" data-edit="' + state.events.indexOf(e) + '">✏️ Edit<span class="sr-only"> ' + esc(e.name) + '</span></button>' : '';
+  }
+
   function removalBtn(e) {
     return '<button class="linkbtn rm" type="button" data-rm="' + state.events.indexOf(e) + '">Artist or organizer? Request removal' +
       '<span class="sr-only"> of ' + esc(e.name) + '</span></button>';
@@ -543,7 +582,7 @@
       (e.ntaflof ? '<div class="ntaflof">No one turned away for lack of funds</div>' : '') +
       (e.description ? '<p class="desc">' + esc(e.description) + '</p>' : '') +
       (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') +
-      '<div class="foot">' + tagHtml(e) + postLink(e, 'Original post') + '</div>' + removalBtn(e) + '</div></article>';
+      '<div class="foot">' + tagHtml(e) + postLink(e, 'Original post') + '</div>' + editBtn(e) + removalBtn(e) + '</div></article>';
   }
 
   function tableRow(e) {
@@ -558,7 +597,7 @@
         (e.description ? '<div class="sub one">' + esc(e.description) + '</div>' : '') + '</td>' +
       '<td class="c-type">' + tagHtml(e) + '</td>' +
       '<td class="c-price">' + priceText(e) + (e.ntaflof ? '<div class="sub ok">No one turned away</div>' : '') + '</td>' +
-      '<td class="c-src">' + (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') + postLink(e, 'Post') + removalBtn(e) + '</td>' +
+      '<td class="c-src">' + (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') + postLink(e, 'Post') + editBtn(e) + removalBtn(e) + '</td>' +
       '</tr>';
   }
 
@@ -589,6 +628,13 @@
     set(v) { try { v ? localStorage.setItem(INVITE_KEY, v) : localStorage.removeItem(INVITE_KEY); } catch (err) { /* private mode */ } },
   };
   state.invite = <?!= jsonForScript_(config.invite || '') ?> || store.get();
+  // Owner edit mode: the private edit link sets this once per browser.
+  const EDIT_KEY = 'hh-edit';
+  const editStore = {
+    get() { try { return localStorage.getItem(EDIT_KEY) || ''; } catch (err) { return ''; } },
+    set(v) { try { v ? localStorage.setItem(EDIT_KEY, v) : localStorage.removeItem(EDIT_KEY); } catch (err) { /* private mode */ } },
+  };
+  state.edit = <?!= jsonForScript_(config.edit || '') ?> || editStore.get();
 
   function showLocked() {
     document.querySelector('.controls').hidden = true;
@@ -630,12 +676,16 @@
         checkVersion();
         if (res.locked) {
           store.set('');
+          if (state.edit) editStore.set('');
           const retry = state.triedCode;
           showLocked();
           if (retry) $('inviteStatus').textContent = "That invite didn't work. It may have been replaced with a new one.";
           return;
         }
         if (state.invite) store.set(state.invite);
+        state.isEditor = Boolean(res.editor);
+        if (state.edit) editStore.set(state.isEditor ? state.edit : '');
+        $('editMode').hidden = !state.isEditor;
         document.querySelector('.controls').hidden = false;
         document.querySelector('.statusbar').hidden = false;
         $('openAdd').hidden = false;
@@ -653,7 +703,7 @@
         $('updated').textContent = "Couldn't refresh. Check your connection and try again.";
         if (!state.events.length) $('list').innerHTML = '<p class="empty">Couldn\'t load events. Tap Refresh to try again.</p>';
       })
-      .getEvents(state.invite);
+      .getEvents(state.invite, state.edit);
   }
 
   // An open page keeps talking to the code it was loaded with, so ask the live page directly.
@@ -725,6 +775,8 @@
       if (chip) { chip.scrollIntoView({ block: 'nearest', inline: 'nearest' }); chip.focus({ preventScroll: true }); }
       return;
     }
+    const ed = ev.target.closest('[data-edit]');
+    if (ed) { openEdit(state.events[Number(ed.dataset.edit)]); return; }
     const rm = ev.target.closest('[data-rm]');
     if (rm) { openRemoval(state.events[Number(rm.dataset.rm)]); return; }
     const b = ev.target.closest('[data-flier]'); if (!b) return;
@@ -742,6 +794,42 @@
   document.addEventListener('click', (ev) => { if (ev.target.closest('.ai-info')) $('aiDlg').showModal(); });
   $('aiClose').addEventListener('click', () => $('aiDlg').close());
 
+  // Owner edit mode.
+  let editTarget = null;
+  function openEdit(e) {
+    if (!e || !e.id) return;
+    editTarget = e;
+    const f = $('editForm');
+    f.reset();
+    f.name.value = e.name; f.date.value = e.date; f.time.value = e.time || ''; f.runsThrough.value = e.runsThrough || '';
+    f.venue.value = e.venue || ''; f.price.value = /^unknown$/i.test(e.price || '') ? '' : (e.price || '');
+    f.type.value = e.type; f.description.value = e.description || '';
+    f.spooky.checked = Boolean(e.spooky); f.ntaflof.checked = Boolean(e.ntaflof); f.hidden.checked = false;
+    $('editStatus').textContent = ''; $('editStatus').className = 'status';
+    $('editSave').disabled = false;
+    $('editDlg').showModal();
+  }
+  $('editCancel').addEventListener('click', () => $('editDlg').close());
+  $('editForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!editTarget) return;
+    const f = $('editForm');
+    const data = Object.fromEntries(new FormData(f).entries());
+    data.spooky = f.spooky.checked; data.ntaflof = f.ntaflof.checked; data.hidden = f.hidden.checked;
+    $('editSave').disabled = true;
+    $('editStatus').className = 'status'; $('editStatus').textContent = 'Saving…';
+    google.script.run
+      .withSuccessHandler((res) => {
+        $('editStatus').className = 'status ' + (res.ok ? 'ok' : 'bad');
+        $('editStatus').textContent = res.message;
+        $('editSave').disabled = false;
+        if (res.ok) { setTimeout(() => $('editDlg').close(), 900); load(false); }
+      })
+      .withFailureHandler(() => { $('editSave').disabled = false; $('editStatus').className = 'status bad'; $('editStatus').textContent = 'Something went wrong. Try again.'; })
+      .updateEvent(state.edit, editTarget.id, data);
+  });
+  $('editOff').addEventListener('click', () => { editStore.set(''); state.edit = ''; state.isEditor = false; $('editMode').hidden = true; render(); });
+
   // Artist/organizer removal requests.
   let rmTarget = null;
   function openRemoval(e) {
@@ -758,7 +846,7 @@
     ev.preventDefault();
     if (!rmTarget) return;
     const data = Object.fromEntries(new FormData($('rmForm')).entries());
-    Object.assign(data, { name: rmTarget.name, date: rmTarget.date, link: rmTarget.link, invite: state.invite });
+    Object.assign(data, { name: rmTarget.name, date: rmTarget.date, link: rmTarget.link, invite: state.invite, edit: state.edit });
     $('rmSubmit').disabled = true;
     $('rmStatus').textContent = 'Taking it down…';
     google.script.run
@@ -791,6 +879,7 @@
     delete data.image;
     data.credit = $('f-credit').checked ? 'on' : 'off';
     data.invite = state.invite;
+    data.edit = state.edit;
     const file = $('f-img').files[0];
     const status = $('status');
     if (!data.url && !file && !(data.name && data.date)) {

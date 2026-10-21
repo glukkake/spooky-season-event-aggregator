@@ -24,7 +24,8 @@ const CONFIG = {
   // Script Properties, created by setup. The Shortcut key stops random people POSTing to the endpoint.
   get SUBMIT_TOKEN() { return PropertiesService.getScriptProperties().getProperty('SUBMIT_TOKEN') || ''; },
   get PAGE_URL() { return PropertiesService.getScriptProperties().getProperty('PAGE_URL') || ''; },
-  MODEL: 'claude-opus-5-5',
+  // Smallest Claude model: plenty for reading flier text, and the least computing per request.
+  MODEL: 'claude-haiku-5-5',
   FOLDER_NAME: 'Spooky season fliers',
   // Public form limits, so spam can't run up the Claude bill or flood the list.
   PUBLIC_PER_HOUR: 30,
@@ -51,7 +52,7 @@ const SETTINGS = [
   ['City / area', 'area', () => '', 'Helps Claude read fliers (e.g. which city a venue is in)'],
   ['Time zone', 'tz', () => Session.getScriptTimeZone(), 'e.g. America/New_York, Europe/London, Australia/Sydney'],
   ['Season starts', 'seasonStart', () => new Date().getFullYear() + '-10-01', 'Events before this go to the Skipped tab (YYYY-MM-DD)'],
-  ['Season ends', 'seasonEnd', () => new Date().getFullYear() + '-11-08', '"Spooky only" and "This Season" stop after this date (YYYY-MM-DD)'],
+  ['Season ends', 'seasonEnd', () => new Date().getFullYear() + '-11-08', 'Nothing after this date is listed or added (YYYY-MM-DD)'],
   ['Footer credit', 'footerCredit', () => '', 'Optional line at the bottom of the page, e.g. "Made by yoursite.com"'],
   ['Footer credit link', 'footerLink', () => '', 'Optional https:// link for the footer credit'],
 ];
@@ -96,7 +97,7 @@ function ensureSettingsSheet_(ss) {
 
 const EVENT_COLS = [
   'Flier', 'Date', 'Day', 'Time', 'Event', 'Type', 'Spooky', 'Venue', 'Price',
-  'Description', 'Link', 'Added by', 'Added', 'Status', 'Flier ID', 'Start', 'Key', 'Arrive by', 'NTAFLOF', 'Credit', 'Credit link', 'Runs through',
+  'Description', 'Link', 'Added by', 'Added', 'Status', 'Flier ID', 'Start', 'Key', 'Arrive by', 'NTAFLOF', 'Credit', 'Credit link', 'Runs through', 'ID',
 ];
 const SKIPPED_COLS = ['Added', 'Link', 'Reason', 'Event', 'Date', 'Added by', 'Flier'];
 const INBOX_COLS = ['Paste an event link here', 'Note (optional)', 'Your name (optional)', 'Result'];
@@ -120,6 +121,9 @@ function onOpen() {
     .addItem(isLocked_() ? '🔒 Page is invite only: show invite link' : '🔒 Lock page (invite only)', 'lockPage')
     .addItem('🔁 New invite link (old one stops working)', 'newInviteLink')
     .addItem('🔓 Unlock page (public)', 'unlockPage')
+    .addSeparator()
+    .addItem('✏️ My edit link (only for you)', 'myEditLink')
+    .addItem('🔁 Replace my edit link', 'newEditLink')
     .addToUi();
   try {
     ensureStartHere_(SpreadsheetApp.getActiveSpreadsheet());
@@ -313,6 +317,7 @@ function doGet(e) {
   const t = HtmlService.createTemplateFromFile('Index');
   t.config = { title: CONFIG.TITLE, tagline: CONFIG.TAGLINE, types: CONFIG.TYPES, from: CONFIG.KEEP_FROM, seasonEnd: CONFIG.SEASON_END,
     invite: /^[A-Za-z0-9]{1,40}$/.test(params.invite || '') ? params.invite : '',
+    edit: /^[A-Za-z0-9]{1,64}$/.test(params.edit || '') ? params.edit : '',
     version: pageVersion_(), pageUrl: CONFIG.PAGE_URL, footerHtml: footerHtml_() };
   return t.evaluate()
     .setTitle(CONFIG.TITLE)
@@ -322,7 +327,7 @@ function doGet(e) {
 /** Called from the public page with google.script.run. */
 function submitFromPage(form) {
   if (!form || typeof form !== 'object') return { ok: false, message: 'Nothing to add.' };
-  if (!hasAccess_(form.invite)) return { ok: false, locked: true, message: 'This list is invite-only right now.' };
+  if (!hasAccess_(form.invite) && !isEditor_(form.edit)) return { ok: false, locked: true, message: 'This list is invite-only right now.' };
   if (form.website) return { ok: true, message: 'Thanks!' }; // honeypot
   if (form.imageBase64 && (typeof form.imageBase64 !== 'string' || form.imageBase64.length > CONFIG.MAX_IMAGE_BYTES * 1.37)) {
     return { ok: false, message: 'That image is too big. Try a screenshot instead.' };
@@ -355,7 +360,7 @@ function submitFromPage(form) {
  */
 function requestRemoval(form) {
   if (!form || typeof form !== 'object' || form.website) return { ok: true, message: 'Thanks.' };
-  if (!hasAccess_(form.invite)) return { ok: false, message: 'This list is invite-only right now.' };
+  if (!hasAccess_(form.invite) && !isEditor_(form.edit)) return { ok: false, message: 'This list is invite-only right now.' };
   if (!underPublicLimit_()) return { ok: false, message: 'Too many requests right now. Try again in an hour.' };
   const name = clip_(form.name, 200);
   const date = clip_(form.date, 10);
@@ -380,12 +385,13 @@ function requestRemoval(form) {
 
 /** Data for the public page: live events from today onward. */
 /** Called from the page. Returns {locked: true} instead of events when the visitor has no valid invite. */
-function getEvents(invite) {
-  if (!hasAccess_(invite)) return { locked: true };
-  return { locked: false, events: getEvents_() };
+function getEvents(invite, edit) {
+  const editor = isEditor_(edit);
+  if (!editor && !hasAccess_(invite)) return { locked: true };
+  return { locked: false, editor, events: getEvents_(editor) };
 }
 
-function getEvents_() {
+function getEvents_(withIds) {
   const sheet = getSpreadsheet_().getSheetByName(SHEETS.EVENTS);
   const last = sheet.getLastRow();
   if (last < 2) return [];
@@ -410,10 +416,15 @@ function getEvents_() {
       credit: String(r[C.Credit - 1]),
       creditLink: String(r[C['Credit link'] - 1]),
       runsThrough: dateCell_(r[C['Runs through'] - 1]),
+      id: withIds ? String(r[C.ID - 1]) : undefined,
       arriveBy: String(r[C['Arrive by'] - 1]) || '99:99',
     }))
-    .map((ev) => { if (ev.runsThrough <= ev.date) ev.runsThrough = ''; return ev; })
-    .filter((ev) => ev.name && !isOffPage_(ev.status) && endsAt_(ev) > now)
+    .map((ev) => {
+      if (ev.runsThrough <= ev.date) ev.runsThrough = '';
+      if (ev.runsThrough > CONFIG.SEASON_END) ev.runsThrough = CONFIG.SEASON_END; // the list stops at the season end
+      return ev;
+    })
+    .filter((ev) => ev.name && !isOffPage_(ev.status) && ev.date <= CONFIG.SEASON_END && endsAt_(ev) > now)
     .sort((a, b) => (a.date + a.arriveBy + a.start).localeCompare(b.date + b.arriveBy + b.start));
 }
 
@@ -512,7 +523,7 @@ function processSubmission_(sub) {
     ev.end_date = validRunEnd_(ev.date, manual.runsThrough || ev.end_date);
     if (manual.name) ev.name = manual.name;
     if (manual.type && CONFIG.TYPES.includes(manual.type)) ev.type = manual.type;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(ev.date) && (ev.end_date || ev.date) >= CONFIG.KEEP_FROM) kept.push(ev);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ev.date) && (ev.end_date || ev.date) >= CONFIG.KEEP_FROM && ev.date <= CONFIG.SEASON_END) kept.push(ev);
     else outside.push(ev);
   });
 
@@ -526,14 +537,14 @@ function processSubmission_(sub) {
     if (kept.length && !appendEvents_(kept, url, addedBy, flierId, credit)) {
       return { ok: true, status: 'duplicate', message: `Already on the list: ${kept[0].name} 👻` };
     }
-    outside.forEach((ev) => logSkipped_(url, ev.date ? 'Before ' + CONFIG.KEEP_FROM : 'No date found', ev.name, ev.date, addedBy, ''));
+    outside.forEach((ev) => logSkipped_(url, !ev.date ? 'No date found' : ev.date > CONFIG.SEASON_END ? 'After the season (ends ' + CONFIG.SEASON_END + ')' : 'Before ' + CONFIG.KEEP_FROM, ev.name, ev.date, addedBy, ''));
   } finally {
     lock.releaseLock();
   }
 
   if (!kept.length) {
     const ev = outside[0];
-    return { ok: true, status: 'skipped', message: `"${ev.name}" ${ev.date ? 'was ' + prettyDate_(ev.date) + ', already past' : 'has no date we could find'}. Saved to the Skipped tab.` };
+    return { ok: true, status: 'skipped', message: `"${ev.name}" ${!ev.date ? 'has no date we could find' : ev.date > CONFIG.SEASON_END ? 'is ' + prettyDate_(ev.date) + ', after the season' : 'was ' + prettyDate_(ev.date) + ', already past'}. Saved to the Skipped tab.` };
   }
   const first = kept[0];
   const more = kept.length > 1 ? ` (+${kept.length - 1} more date${kept.length > 2 ? 's' : ''})` : '';
@@ -570,6 +581,7 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
     row[C.Key - 1] = url ? cell_(url + '#' + ev.date) : '';
     row[C['Arrive by'] - 1] = cell_(arriveBy_(ev.start_time, ev.end_time));
     row[C['Runs through'] - 1] = ev.end_date || '';
+    row[C.ID - 1] = Utilities.getUuid();
     row[C.Credit - 1] = credit ? cell_(credit.name) : '';
     row[C['Credit link'] - 1] = credit && /^https?:\/\//.test(credit.link) ? cell_(credit.link) : '';
     return row;
@@ -633,6 +645,12 @@ function cleanUp_() {
     sheet.setColumnWidth(C.NTAFLOF, 80);
   }
   const privatized = privatizeFliers_(sheet);
+  // Stable IDs for owner edits from the page.
+  if (sheet.getLastRow() > 1) {
+    const idRange = sheet.getRange(2, C.ID, sheet.getLastRow() - 1, 1);
+    idRange.setValues(idRange.getValues().map(([id]) => [id || Utilities.getUuid()]));
+    sheet.hideColumns(C.ID);
+  }
   sheet.getRange(2, C.Status, sheet.getMaxRows() - 1, 1).setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInList(['live', 'hidden', 'removal requested'], true).build());
   // Prices typed as "$85" become currency numbers; store them as the text they display.
@@ -913,8 +931,8 @@ function flierCell_(id) {
  * Called from the page: a flier as a data: URL, so no public image links exist.
  * Only serves fliers of events currently listed, and only to visitors with access.
  */
-function getFlier(id, size, invite) {
-  if (!hasAccess_(invite)) return '';
+function getFlier(id, size, invite, edit) {
+  if (!hasAccess_(invite) && !isEditor_(edit)) return '';
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{20,80}$/.test(id)) return '';
   const px = [480, 1400].includes(size) ? size : 480;
   const cache = CacheService.getScriptCache();
@@ -1160,6 +1178,75 @@ function prettyDate_(ymd, pattern) {
 }
 
 // ---------------------------------------------------------------- invite-only mode
+
+// ---------------------------------------------------------------- owner edit mode
+
+function isEditor_(key) {
+  const code = PropertiesService.getScriptProperties().getProperty('EDIT_KEY');
+  return Boolean(code) && typeof key === 'string' && key === code;
+}
+
+function myEditLink() {
+  ownerOnly_();
+  const props = PropertiesService.getScriptProperties();
+  if (!props.getProperty('EDIT_KEY')) props.setProperty('EDIT_KEY', newCode_() + newCode_());
+  showEditLink_('Your private edit link. Open it once on each of your devices; that browser then shows ✏️ Edit on every listing. Don\'t share it: anyone with it can edit the list.');
+}
+
+function newEditLink() {
+  ownerOnly_();
+  PropertiesService.getScriptProperties().setProperty('EDIT_KEY', newCode_() + newCode_());
+  showEditLink_('New edit link. The old one no longer works on any device. Open this one on your devices again:');
+}
+
+function showEditLink_(intro) {
+  if (!CONFIG.PAGE_URL) {
+    SpreadsheetApp.getUi().alert('Save your public page link first (🎃 Events → 3), then come back for your edit link.');
+    return;
+  }
+  const link = CONFIG.PAGE_URL + '?edit=' + PropertiesService.getScriptProperties().getProperty('EDIT_KEY');
+  const html = HtmlService.createHtmlOutput(
+    '<div style="font:14px/1.5 system-ui,sans-serif"><p>' + intro + '</p>' +
+    '<input readonly value="' + link + '" style="width:100%;padding:8px;font:inherit" onclick="this.select()"></div>'
+  ).setWidth(520).setHeight(200);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Edit link (only for you)');
+}
+
+/** Called from the page in edit mode: saves the owner's changes to one listing. */
+function updateEvent(edit, id, f) {
+  if (!isEditor_(edit)) return { ok: false, message: 'Edit mode isn\'t on for this browser.' };
+  if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id) || !f || typeof f !== 'object') return { ok: false, message: 'Nothing to save.' };
+  const sheet = getSpreadsheet_().getSheetByName(SHEETS.EVENTS);
+  const ids = columnValues_(sheet, C.ID);
+  const i = ids.indexOf(id);
+  if (i < 0) return { ok: false, message: "Couldn't find that listing. Refresh and try again." };
+  const row = i + 2;
+  const date = String(f.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, message: 'Pick a date.' };
+  const name = clip_(f.name, 200);
+  if (!name) return { ok: false, message: 'The event needs a name.' };
+  const time = clip_(f.time, 40);
+  const [from, to] = time.split(/\s*[–-]\s*/);
+  const start = to24_(from);
+  const [y, m, d] = date.split('-').map(Number);
+  const text = (col, v) => sheet.getRange(row, col).setNumberFormat('@').setValue(cell_(v));
+  sheet.getRange(row, C.Date).setValue(new Date(y, m - 1, d));
+  text(C.Day, Utilities.formatDate(new Date(y, m - 1, d, 12), CONFIG.TZ, 'EEE'));
+  text(C.Event, name);
+  text(C.Time, time);
+  text(C.Start, start || '99:99');
+  text(C['Arrive by'], arriveBy_(start, to24_(to)));
+  text(C['Runs through'], validRunEnd_(date, String(f.runsThrough || '')));
+  text(C.Venue, clip_(f.venue, 200));
+  text(C.Price, clip_(f.price, 80) || 'Unknown');
+  text(C.Type, CONFIG.TYPES.includes(f.type) ? f.type : 'Other');
+  text(C.Spooky, f.spooky ? '🎃' : '');
+  text(C.NTAFLOF, f.ntaflof ? 'yes' : '');
+  text(C.Description, clip_(f.description, 400));
+  text(C.Status, f.hidden ? 'hidden' : 'live');
+  sortEvents_();
+  return { ok: true, message: f.hidden ? 'Saved and hidden from the list.' : 'Saved.' };
+}
 
 function isLocked_() {
   return PropertiesService.getScriptProperties().getProperty('LOCKED') === 'true';
