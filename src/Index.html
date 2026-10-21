@@ -120,7 +120,14 @@
   .newver { color: var(--focus); font-weight: 600; }
   .newver a { color: var(--focus); }
   .field-note { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
-  .field-note a { color: var(--accent); }
+  .field-note .linkbtn, .site-foot .linkbtn { font-size: 13px; padding: 0; }
+  .linkbtn.rm { align-self: flex-start; font-size: 12px; font-weight: 400; color: var(--muted); padding: 6px 0 0; }
+  .linkbtn.rm:hover { color: var(--accent); }
+  .tbl .linkbtn.rm { display: block; }
+  .rm-event { font-weight: 700; margin: 0 0 4px; }
+  .dlg.info h3 { margin: 16px 0 4px; font-size: 1rem; color: var(--accent); }
+  .dlg.info p { margin: 0 0 6px; font-size: 14px; }
+  .dlg.info .more { margin-top: 14px; }
   .site-foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
   .site-foot p { margin: 0; max-width: 70ch; }
   .site-foot a { color: var(--muted); }
@@ -235,7 +242,7 @@
 
   <footer class="site-foot">
     <p><?!= config.footerHtml ?>Event details are read from fliers by AI, so double-check the original post before you go.
-      Uploaded fliers are not used to train AI. <a href="https://github.com/glukkake/spooky-season-event-aggregator#privacy" target="_blank" rel="noopener noreferrer">How images are handled<span class="sr-only"> (opens in new tab)</span></a></p>
+      Fliers are never used to train AI. <button class="linkbtn ai-info" type="button">How AI is used here</button></p>
   </footer>
 </div>
 
@@ -249,8 +256,8 @@
 
     <label for="f-img">Flier image <span class="opt">(screenshot works)</span></label>
     <input id="f-img" name="image" type="file" accept="image/*" aria-describedby="f-img-note">
-    <p class="field-note" id="f-img-note">Fliers are read by Claude AI to fill in the details and are not used to train AI.
-      <a href="https://github.com/glukkake/spooky-season-event-aggregator#privacy" target="_blank" rel="noopener noreferrer">How images are handled<span class="sr-only"> (opens in new tab)</span></a></p>
+    <p class="field-note" id="f-img-note">Fliers are read by AI to fill in the details and are never used to train AI.
+      <button class="linkbtn ai-info" type="button">How AI is used here</button></p>
 
     <details>
       <summary>Type in details</summary>
@@ -283,6 +290,42 @@
     <div class="actions">
       <button class="btn secondary" type="button" id="closeAdd">Close</button>
       <button class="btn" type="submit" id="submitAdd">Add it</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="aiDlg" aria-labelledby="aiTitle">
+  <div class="dlg info">
+    <h2 id="aiTitle">How AI is used here</h2>
+    <h3>What the AI does</h3>
+    <p>When an event is added, Claude, an AI model made by Anthropic, reads the words on the flier and post (the event name, date, time, venue and price) and fills in the listing, so nobody has to type it. That's the only thing AI does in this app.</p>
+    <h3>What it doesn't do</h3>
+    <p>It doesn't create, edit or restyle any artwork. The fliers you see are the original art, credited and linked to whoever posted them.</p>
+    <h3>Is the art used to train AI?</h3>
+    <p>No. Fliers are sent to Anthropic's API, whose terms don't use them to train AI models, and Anthropic deletes them within 30 days. The copy this app keeps is stored privately in the list owner's Google Drive and is only ever shown inside this app, never at a public web address. Invite-only lists can only be seen by people with the invite link.</p>
+    <h3>Energy use</h3>
+    <p>Each flier is read once, when its event is added, as one short request. Browsing the list doesn't use AI at all. Anthropic doesn't publish energy figures for individual requests, so we can't give an exact number.</p>
+    <h3>Artists and organizers</h3>
+    <p>Want your event or art taken down? Use <strong>Request removal</strong> on the listing and it comes down right away.</p>
+    <p class="more"><a href="https://github.com/glukkake/spooky-season-event-aggregator#ai-art-and-privacy" target="_blank" rel="noopener noreferrer">More about privacy and how images are handled<span class="sr-only"> (opens in new tab)</span> ↗</a></p>
+    <div class="actions"><button class="btn" type="button" id="aiClose">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="rmDlg" aria-labelledby="rmTitle">
+  <form class="dlg" id="rmForm" method="dialog">
+    <h2 id="rmTitle">Request removal</h2>
+    <p class="help">If this is your event or your art, it comes down from this list right away and the list owner is notified.</p>
+    <p class="rm-event" id="rmEvent"></p>
+    <label for="rm-msg">Anything the owner should know? <span class="opt">(optional)</span></label>
+    <textarea id="rm-msg" name="message" maxlength="500"></textarea>
+    <label for="rm-contact">How to reach you <span class="opt">(optional; only the list owner sees this)</span></label>
+    <input id="rm-contact" name="contact" maxlength="120" autocomplete="email">
+    <div class="hp" aria-hidden="true"><label for="rm-website">Website</label><input id="rm-website" name="website" tabindex="-1" autocomplete="off"></div>
+    <p class="status" id="rmStatus" role="status"></p>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="rmCancel">Cancel</button>
+      <button class="btn" type="submit" id="rmSubmit">Take it down</button>
     </div>
   </form>
 </dialog>
@@ -362,7 +405,37 @@
     if (ymdStr.slice(5) === '10-31') return 'Halloween';
     return '';
   }
-  function thumb(id, w) { return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(id) + '&sz=w' + w; }
+  // Fliers are private: the page asks the app for each one (as a data: URL) when it scrolls into view.
+  const flierCache = new Map();
+  const flierQueue = [];
+  let fliersInFlight = 0;
+  function loadFlier(id, size) {
+    const key = id + '@' + size;
+    if (id.startsWith('data:')) return Promise.resolve(id); // demo builds
+    if (!flierCache.has(key)) {
+      flierCache.set(key, new Promise((resolve) => { flierQueue.push({ id, size, resolve }); pumpFliers(); }));
+    }
+    return flierCache.get(key);
+  }
+  function pumpFliers() {
+    while (fliersInFlight < 4 && flierQueue.length) {
+      const job = flierQueue.shift();
+      fliersInFlight++;
+      const done = (url) => { fliersInFlight--; job.resolve(url || ''); pumpFliers(); };
+      google.script.run.withSuccessHandler(done).withFailureHandler(() => done('')).getFlier(job.id, job.size, state.invite);
+    }
+  }
+  const flierObserver = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+    entries.forEach((en) => { if (en.isIntersecting) { flierObserver.unobserve(en.target); showFlier(en.target); } });
+  }, { rootMargin: '400px' }) : null;
+  function showFlier(img) {
+    loadFlier(img.dataset.fid, 480).then((url) => {
+      if (url) { img.src = url; } else { img.closest('.flier, .mini')?.classList.add('none'); img.replaceWith(Object.assign(document.createElement('span'), { textContent: img.dataset.emoji, ariaHidden: 'true' })); }
+    });
+  }
+  function watchFliers() {
+    $('list').querySelectorAll('img[data-fid]').forEach((img) => (flierObserver ? flierObserver.observe(img) : showFlier(img)));
+  }
 
   function render() {
     renderChips();
@@ -384,11 +457,13 @@
     shown.filter((e) => !underWay(e)).forEach((e) => { const last = days[days.length - 1]; if (last && last.date === e.date) last.items.push(e); else days.push({ date: e.date, items: [e] }); });
     if (state.view === 'table') {
       $('list').innerHTML = renderTable(days);
+      watchFliers();
       return;
     }
     $('list').innerHTML = days.map((d) =>
       '<section class="day" aria-labelledby="d-' + esc(d.date) + '"><h2 id="d-' + esc(d.date) + '">' + dayHeading(d) +
       '</h2><div class="grid">' + d.items.map(card).join('') + '</div></section>').join('');
+    watchFliers();
   }
 
   // Font Awesome Free 6.5.2 icons (CC BY 4.0, fontawesome.com/license/free), inlined so no CDN is needed.
@@ -417,6 +492,11 @@
   function priceText(e) {
     const p = String(e.price || '').trim();
     return !p || /^unknown$/i.test(p) ? '<span class="unknown">Price unknown</span>' : esc(p);
+  }
+
+  function removalBtn(e) {
+    return '<button class="linkbtn rm" type="button" data-rm="' + state.events.indexOf(e) + '">Artist or organizer? Request removal' +
+      '<span class="sr-only"> of ' + esc(e.name) + '</span></button>';
   }
 
   function tagHtml(e) {
@@ -452,7 +532,7 @@
 
   function card(e) {
     const flier = e.flierId
-      ? '<button class="flier" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img loading="lazy" src="' + thumb(e.flierId, 600) + '" alt=""></button>'
+      ? '<button class="flier" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img data-fid="' + esc(e.flierId) + '" data-emoji="' + typeEmoji(e.type) + '" alt=""></button>'
       : '<div class="flier none" aria-hidden="true">' + typeEmoji(e.type) + '</div>';
     const meta = esc(e.venue);
     return '<article class="card">' + flier + '<div class="body">' +
@@ -463,12 +543,12 @@
       (e.ntaflof ? '<div class="ntaflof">No one turned away for lack of funds</div>' : '') +
       (e.description ? '<p class="desc">' + esc(e.description) + '</p>' : '') +
       (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') +
-      '<div class="foot">' + tagHtml(e) + postLink(e, 'Original post') + '</div></div></article>';
+      '<div class="foot">' + tagHtml(e) + postLink(e, 'Original post') + '</div>' + removalBtn(e) + '</div></article>';
   }
 
   function tableRow(e) {
     const flier = e.flierId
-      ? '<button class="mini" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img loading="lazy" src="' + thumb(e.flierId, 160) + '" alt=""></button>'
+      ? '<button class="mini" type="button" data-flier="' + esc(e.flierId) + '" aria-label="View flier for ' + esc(e.name) + '"><img data-fid="' + esc(e.flierId) + '" data-emoji="' + typeEmoji(e.type) + '" alt=""></button>'
       : '<span class="mini none" aria-hidden="true">' + typeEmoji(e.type) + '</span>';
     return '<tr class="ev-row">' +
       '<td class="c-flier">' + flier + '</td>' +
@@ -478,7 +558,7 @@
         (e.description ? '<div class="sub one">' + esc(e.description) + '</div>' : '') + '</td>' +
       '<td class="c-type">' + tagHtml(e) + '</td>' +
       '<td class="c-price">' + priceText(e) + (e.ntaflof ? '<div class="sub ok">No one turned away</div>' : '') + '</td>' +
-      '<td class="c-src">' + (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') + postLink(e, 'Post') + '</td>' +
+      '<td class="c-src">' + (e.credit ? '<div class="credit">' + creditHtml(e) + '</div>' : '') + postLink(e, 'Post') + removalBtn(e) + '</td>' +
       '</tr>';
   }
 
@@ -645,13 +725,51 @@
       if (chip) { chip.scrollIntoView({ block: 'nearest', inline: 'nearest' }); chip.focus({ preventScroll: true }); }
       return;
     }
+    const rm = ev.target.closest('[data-rm]');
+    if (rm) { openRemoval(state.events[Number(rm.dataset.rm)]); return; }
     const b = ev.target.closest('[data-flier]'); if (!b) return;
     const e = state.events.find((x) => x.flierId === b.dataset.flier);
-    $('lbImg').src = thumb(b.dataset.flier, 1600);
-    $('lbImg').alt = 'Flier for ' + (e ? e.name : 'event');
+    const lb = $('lbImg');
+    lb.alt = 'Flier for ' + (e ? e.name : 'event');
+    lb.removeAttribute('src');
+    loadFlier(b.dataset.flier, 480).then((url) => { if (url && !lb.src) lb.src = url; }); // show the small one first
+    loadFlier(b.dataset.flier, 1400).then((url) => { if (url) lb.src = url; });
     $('lightbox').showModal();
   });
   $('lbClose').addEventListener('click', () => $('lightbox').close());
+
+  // "How AI is used here" panel (opened from the add form and the footer).
+  document.addEventListener('click', (ev) => { if (ev.target.closest('.ai-info')) $('aiDlg').showModal(); });
+  $('aiClose').addEventListener('click', () => $('aiDlg').close());
+
+  // Artist/organizer removal requests.
+  let rmTarget = null;
+  function openRemoval(e) {
+    if (!e) return;
+    rmTarget = e;
+    $('rmForm').reset();
+    $('rmStatus').textContent = ''; $('rmStatus').className = 'status';
+    $('rmEvent').textContent = e.name + ' · ' + dayLabel(e.date);
+    $('rmSubmit').disabled = false;
+    $('rmDlg').showModal();
+  }
+  $('rmCancel').addEventListener('click', () => $('rmDlg').close());
+  $('rmForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!rmTarget) return;
+    const data = Object.fromEntries(new FormData($('rmForm')).entries());
+    Object.assign(data, { name: rmTarget.name, date: rmTarget.date, link: rmTarget.link, invite: state.invite });
+    $('rmSubmit').disabled = true;
+    $('rmStatus').textContent = 'Taking it down…';
+    google.script.run
+      .withSuccessHandler((res) => {
+        $('rmStatus').className = 'status ' + (res.ok ? 'ok' : 'bad');
+        $('rmStatus').textContent = res.message;
+        if (res.ok) { setTimeout(() => $('rmDlg').close(), 1800); load(false); } else { $('rmSubmit').disabled = false; }
+      })
+      .withFailureHandler(() => { $('rmSubmit').disabled = false; $('rmStatus').className = 'status bad'; $('rmStatus').textContent = 'Something went wrong. Try again in a minute.'; })
+      .requestRemoval(data);
+  });
   $('lightbox').addEventListener('click', (ev) => { if (ev.target === $('lightbox')) $('lightbox').close(); });
 
   $('openAdd').addEventListener('click', () => { $('status').textContent = ''; $('status').className = 'status'; $('addDlg').showModal(); $('f-url').focus(); });

@@ -37,7 +37,12 @@ const CONFIG = {
   ],
 };
 
-const SHEETS = { SETTINGS: 'Settings', EVENTS: 'Events', SKIPPED: 'Skipped', INBOX: 'Add links here' };
+const SHEETS = { SETTINGS: 'Settings', EVENTS: 'Events', SKIPPED: 'Skipped', INBOX: 'Add links here', REMOVALS: 'Removal requests' };
+const REMOVAL_COLS = ['Requested', 'Event', 'Date', 'Link', 'Message', 'Contact (optional)', 'Your notes'];
+
+// Statuses that keep an event off the page. "removal requested" is set by the artist/organizer button.
+const OFF_PAGE = ['hidden', 'removal requested'];
+const isOffPage_ = (status) => OFF_PAGE.includes(String(status).trim().toLowerCase());
 
 // Settings tab rows: [label, key, default, note]. Defaults are what a fresh copy starts with.
 const SETTINGS = [
@@ -138,7 +143,8 @@ function ensureStartHere_(ss) {
     ['3. Get a Claude API key at console.anthropic.com (reading each flier costs about 1–2¢), then 🎃 Events → 2. Set Claude API key.'],
     ['4. Extensions → Apps Script → Deploy → New deployment → gear icon → Web app.'],
     ['    Execute as: Me. Who has access: Anyone. Deploy, then copy the Web app URL.'],
-    ['5. 🎃 Events → 3. Save public page link, and paste that URL. That link is your public page: share it!'],
+    ['5. 🎃 Events → 3. Save public page link, and paste that URL. You\'ll get your invite link: share that with friends.'],
+    ['    Your list starts invite-only, so only people with the invite link can see it. 🎃 Events → Unlock page makes it public.'],
     [''],
     ['Optional: an iPhone Shortcut for adding events from Instagram/Facebook, and invite-only mode. See the guide:'],
     [REPO_URL + '#readme'],
@@ -161,6 +167,11 @@ function setup() {
   settingsCache_ = null;
   ss.setSpreadsheetTimeZone(CONFIG.TZ);
   if (!props.getProperty('SUBMIT_TOKEN')) props.setProperty('SUBMIT_TOKEN', newCode_() + newCode_());
+  // New lists start invite-only: only people with the invite link can see them (keeps scrapers out).
+  if (props.getProperty('LOCKED') === null) {
+    props.setProperty('LOCKED', 'true');
+    if (!props.getProperty('INVITE_CODE')) props.setProperty('INVITE_CODE', newCode_());
+  }
 
   const events = ensureSheet_(ss, SHEETS.EVENTS, EVENT_COLS);
   const widths = { Flier: 130, Date: 90, Day: 50, Time: 120, Event: 220, Type: 120, Spooky: 60,
@@ -177,7 +188,7 @@ function setup() {
   events.getRange(2, C.Type, events.getMaxRows() - 1, 1).setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInList(CONFIG.TYPES, true).setAllowInvalid(true).build());
   events.getRange(2, C.Status, events.getMaxRows() - 1, 1).setDataValidation(
-    SpreadsheetApp.newDataValidation().requireValueInList(['live', 'hidden'], true).build());
+    SpreadsheetApp.newDataValidation().requireValueInList(['live', 'hidden', 'removal requested'], true).build());
 
   const skipped = ensureSheet_(ss, SHEETS.SKIPPED, SKIPPED_COLS);
   skipped.setColumnWidth(2, 260).setColumnWidth(3, 260).setColumnWidth(4, 220);
@@ -221,7 +232,11 @@ function promptForPageUrl() {
     return;
   }
   PropertiesService.getScriptProperties().setProperty('PAGE_URL', url);
-  ui.alert('Saved. Share this link with friends:\n\n' + url);
+  if (isLocked_()) {
+    showInviteLink_('Saved. Your list is invite-only, so share this invite link (not the plain one) with friends:');
+  } else {
+    ui.alert('Saved. Share this link with friends:\n\n' + url);
+  }
 }
 
 function showShortcutDetails() {
@@ -292,7 +307,8 @@ function doGet(e) {
   const params = (e && e.parameter) || {};
   if (params.format === 'version') return json_({ version: pageVersion_() });
   if (params.format === 'json') {
-    return json_(hasAccess_(params.invite) ? getEvents_() : { locked: true });
+    // Owner-only, so the whole list can't be harvested in one request.
+    return json_(CONFIG.SUBMIT_TOKEN && params.key === CONFIG.SUBMIT_TOKEN ? getEvents_() : { ok: false });
   }
   const t = HtmlService.createTemplateFromFile('Index');
   t.config = { title: CONFIG.TITLE, tagline: CONFIG.TAGLINE, types: CONFIG.TYPES, from: CONFIG.KEEP_FROM, seasonEnd: CONFIG.SEASON_END,
@@ -333,6 +349,35 @@ function submitFromPage(form) {
   }
 }
 
+/**
+ * Called from the page: an artist or organizer asks for a listing to come down.
+ * Hides it right away (every date from the same post) and logs it for the owner.
+ */
+function requestRemoval(form) {
+  if (!form || typeof form !== 'object' || form.website) return { ok: true, message: 'Thanks.' };
+  if (!hasAccess_(form.invite)) return { ok: false, message: 'This list is invite-only right now.' };
+  if (!underPublicLimit_()) return { ok: false, message: 'Too many requests right now. Try again in an hour.' };
+  const name = clip_(form.name, 200);
+  const date = clip_(form.date, 10);
+  const link = /^https?:\/\//.test(String(form.link || '')) ? cleanUrl_(form.link) : '';
+  const ss = getSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.EVENTS);
+  const rows = readEventRows_(sheet);
+  const match = rows.filter((r) => !isOffPage_(r.status) &&
+    ((link && r.link === link) || (r.name === name && r.date === date)));
+  if (!match.length) return { ok: false, message: "Couldn't find that listing. It may already be down." };
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    match.forEach((r) => sheet.getRange(r.row, C.Status).setValue('removal requested'));
+    const log = ss.getSheetByName(SHEETS.REMOVALS) || ensureSheet_(ss, SHEETS.REMOVALS, REMOVAL_COLS);
+    log.appendRow([new Date(), cell_(name), cell_(date), cell_(link), cell_(clip_(form.message, 500)), cell_(clip_(form.contact, 120)), '']);
+  } finally {
+    lock.releaseLock();
+  }
+  return { ok: true, message: 'Done. The listing is down, and the list owner has your request.' };
+}
+
 /** Data for the public page: live events from today onward. */
 /** Called from the page. Returns {locked: true} instead of events when the visitor has no valid invite. */
 function getEvents(invite) {
@@ -368,7 +413,7 @@ function getEvents_() {
       arriveBy: String(r[C['Arrive by'] - 1]) || '99:99',
     }))
     .map((ev) => { if (ev.runsThrough <= ev.date) ev.runsThrough = ''; return ev; })
-    .filter((ev) => ev.name && ev.status !== 'hidden' && endsAt_(ev) > now)
+    .filter((ev) => ev.name && !isOffPage_(ev.status) && endsAt_(ev) > now)
     .sort((a, b) => (a.date + a.arriveBy + a.start).localeCompare(b.date + b.arriveBy + b.start));
 }
 
@@ -505,7 +550,7 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
   const rows = events.map((ev) => {
     const row = new Array(EVENT_COLS.length).fill('');
     const [y, m, d] = ev.date.split('-').map(Number);
-    row[C.Flier - 1] = flierId ? `=IMAGE("${thumbUrl_(flierId)}")` : '';
+    row[C.Flier - 1] = flierId ? flierCell_(flierId) : '';
     row[C.Date - 1] = new Date(y, m - 1, d);
     row[C.Day - 1] = Utilities.formatDate(new Date(y, m - 1, d, 12), CONFIG.TZ, 'EEE');
     row[C.Time - 1] = cell_([ev.start_time, ev.end_time].filter(Boolean).map(prettyTime_).join(' – '));
@@ -587,6 +632,9 @@ function cleanUp_() {
     sheet.hideColumns(C['Flier ID'], 4);
     sheet.setColumnWidth(C.NTAFLOF, 80);
   }
+  const privatized = privatizeFliers_(sheet);
+  sheet.getRange(2, C.Status, sheet.getMaxRows() - 1, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(['live', 'hidden', 'removal requested'], true).build());
   // Prices typed as "$85" become currency numbers; store them as the text they display.
   if (sheet.getLastRow() > 1) {
     const priceRange = sheet.getRange(2, C.Price, sheet.getLastRow() - 1, 1);
@@ -612,7 +660,7 @@ function cleanUp_() {
       if (to24_(from) && to24_(from) !== String(r.start)) sheet.getRange(r.row, C.Start).setNumberFormat('@').setValue(to24_(from));
     }
   });
-  const live = rows.filter((r) => r.status !== 'hidden' && r.name);
+  const live = rows.filter((r) => !isOffPage_(r.status) && r.name);
   live.forEach((r, i) => {
     // Two listings from the same post are separate events (a show and its after-party), never duplicates.
     const dupOf = live.slice(0, i).find((o) => !o.dupe && o.date === r.date && !(o.link && o.link === r.link) && sameEvent_(o.name, r.name));
@@ -624,7 +672,7 @@ function cleanUp_() {
     hidden++;
   });
   sortEvents_();
-  return { ok: true, message: `Fixed ${fixed} times, hid ${hidden} duplicates.` };
+  return { ok: true, message: `Fixed ${fixed} times, hid ${hidden} duplicates, made ${privatized} fliers private.` };
 }
 
 function sortEvents() {
@@ -733,7 +781,7 @@ function unskipOutsideWindow_() {
 
 function logSkipped_(url, reason, name, date, addedBy, flierId) {
   getSpreadsheet_().getSheetByName(SHEETS.SKIPPED)
-    .appendRow([new Date(), cell_(url), cell_(reason), cell_(name), cell_(date), cell_(addedBy), flierId ? thumbUrl_(flierId) : '']);
+    .appendRow([new Date(), cell_(url), cell_(reason), cell_(name), cell_(date), cell_(addedBy), '']);
 }
 
 function isKnownLink_(url) {
@@ -852,9 +900,66 @@ function saveFlier_(blob) {
   if (!blob) return '';
   const ext = (blob.getContentType().split('/')[1] || 'jpg').replace('jpeg', 'jpg');
   const name = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyyMMdd-HHmmss') + '-' + Math.random().toString(36).slice(2, 6) + '.' + ext;
-  const file = getFolder_().createFile(blob.setName(name));
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  return file.getId();
+  // Private: only the owner's account can open it; the page gets images through getFlier().
+  return getFolder_().createFile(blob.setName(name)).getId();
+}
+
+/** In the owner's sheet: a link that opens the private flier in Drive (Sheets can't show private images inline). */
+function flierCell_(id) {
+  return `=HYPERLINK("https://drive.google.com/file/d/${id}/view", "Open flier")`;
+}
+
+/**
+ * Called from the page: a flier as a data: URL, so no public image links exist.
+ * Only serves fliers of events currently listed, and only to visitors with access.
+ */
+function getFlier(id, size, invite) {
+  if (!hasAccess_(invite)) return '';
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{20,80}$/.test(id)) return '';
+  const px = [480, 1400].includes(size) ? size : 480;
+  const cache = CacheService.getScriptCache();
+  const key = 'fl-' + id + '-' + px;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const sheet = getSpreadsheet_().getSheetByName(SHEETS.EVENTS);
+  const last = sheet.getLastRow();
+  if (last < 2) return '';
+  const rows = sheet.getRange(2, 1, last - 1, EVENT_COLS.length).getValues();
+  if (!rows.some((r) => String(r[C['Flier ID'] - 1]) === id && !isOffPage_(r[C.Status - 1]))) return '';
+  try {
+    const auth = { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+    const meta = JSON.parse(UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '?fields=thumbnailLink', auth).getContentText());
+    if (!meta.thumbnailLink) return '';
+    const res = UrlFetchApp.fetch(meta.thumbnailLink.replace(/=s\d+$/, '') + '=s' + px, auth);
+    if (res.getResponseCode() !== 200) return '';
+    const img = validImage_(res.getBlob(), 5 * 1024 * 1024);
+    if (!img) return '';
+    const url = 'data:' + img.getContentType() + ';base64,' + Utilities.base64Encode(img.getBytes());
+    if (url.length < 95000) cache.put(key, url, 6 * 3600);
+    return url;
+  } catch (err) {
+    console.warn('getFlier', id, err);
+    return '';
+  }
+}
+
+/** Turns off link sharing on every stored flier and points the sheet at private links. Part of Tidy up. */
+function privatizeFliers_(sheet) {
+  let changed = 0;
+  const files = getFolder_().getFiles();
+  while (files.hasNext()) {
+    const f = files.next();
+    if (f.getSharingAccess() !== DriveApp.Access.PRIVATE) {
+      f.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+      changed++;
+    }
+  }
+  const last = sheet.getLastRow();
+  if (last > 1) {
+    const ids = sheet.getRange(2, C['Flier ID'], last - 1, 1).getValues();
+    sheet.getRange(2, C.Flier, last - 1, 1).setFormulas(ids.map(([id]) => [id ? flierCell_(id) : '']));
+  }
+  return changed;
 }
 
 function thumbUrl_(id) {

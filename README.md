@@ -23,7 +23,8 @@ It runs entirely in your own Google account (Google Sheets + Apps Script). No se
 - **Price and NTAFLOF.** Every card shows the ticket price (or Free), and notes when no one is turned away for lack of funds.
 - **Credits the source.** Cards link back to the Instagram account, Facebook page or website that posted the event. People adding events can opt out.
 - **Anyone can add events** from the page, no Google account needed. Duplicates are caught automatically.
-- **Invite-only mode.** If your list spreads further than you'd like, lock it with one menu click and send a private invite link to your friends. Replace the link any time to cut off old ones.
+- **Invite-only by default.** Only people with your invite link can see the list. Replace the link any time to cut off old ones, or make the list public from the menu.
+- **Artists stay in control.** Every listing has a **Request removal** link that takes it down right away. See [AI, art and privacy](#ai-art-and-privacy).
 - **Accessible.** Keyboard and screen reader friendly, readable contrast, respects reduced motion.
 
 <img src="docs/screenshot-phone.png" alt="The page on a phone: full-width flier cards" width="300">
@@ -36,7 +37,7 @@ It runs entirely in your own Google account (Google Sheets + Apps Script). No se
    2. Fill in the **Settings** tab: page title, city, time zone, season start and end dates (and an optional footer credit).
    3. Get a Claude API key at [console.anthropic.com](https://console.anthropic.com), then **🎃 Events → 2. Set Claude API key**.
    4. **Extensions → Apps Script → Deploy → New deployment → ⚙ Web app.** Execute as: **Me**. Who has access: **Anyone**. Click **Deploy** and copy the Web app URL.
-   5. **🎃 Events → 3. Save public page link** and paste it. That URL is your page: share it!
+   5. **🎃 Events → 3. Save public page link** and paste it. You'll get your **invite link**: share that with friends. (Your list starts invite-only; **🔓 Unlock page** makes it public.)
 
 ### What the permissions are for
 
@@ -67,6 +68,7 @@ Everything is in the **🎃 Events** menu and the sheet itself:
 - **Edited a time?** Run **Tidy up** so it re-sorts.
 - **Invite-only:** **🔒 Lock page** gives you an invite link. **🔁 New invite link** cuts off the old one. **🔓 Unlock page** makes it public again.
 - **Skipped tab:** posts that weren't events, or were dated before your season, land here so nothing is silently lost.
+- **Removal requests tab:** when an artist or organizer takes a listing down, it's logged here and the event's Status becomes `removal requested`. Set it back to `live` if it was a mistake.
 
 ## Security
 
@@ -79,13 +81,35 @@ The page runs as you, so it was built defensively:
 - Claude is told that posts are untrusted data and can only return event details, and its answers are checked (times, dates, types) before anything is saved.
 - Cards only ever link to `http(s)` URLs, and nothing from a link's address is ever run as code on the page.
 
-## Privacy
+## AI, art and privacy
+
+Contributors raised good questions about how this app uses AI, what happens to the artists' fliers that pass through it, and whether any of it could end up training AI. This section is how the project answers them, and the changes that came out of those conversations.
+
+### How AI is used
+
+- **It only reads.** When an event is added, Claude (an AI model made by Anthropic) reads the words on the flier and post (the event name, date, time, venue and price) and fills in the listing. That is the only thing AI does in this app.
+- **It never makes or changes art.** No images are generated, edited or restyled. The fliers shown are the original art, credited and linked to whoever posted them.
+- **Browsing uses no AI.** Each flier is read once, when its event is added, as one short request. Anthropic doesn't publish energy figures for individual requests, so there's no exact number to share.
+- **It's explained in the app too.** A **How AI is used here** panel is linked from the add form and the page footer.
+
+### Keeping fliers out of AI training
+
+- **Not used to train Claude.** Images and captions are sent to Anthropic's Claude API under its commercial terms, which don't use API inputs or outputs to train models unless the API account owner opts in. Anthropic deletes API inputs and outputs within 30 days; content flagged by its automated safety systems can be kept longer. See [API and data retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention) and [how long Anthropic stores data](https://privacy.anthropic.com/en/articles/7996866-how-long-do-you-store-personal-data). If you run a copy, check your own Anthropic Console account's data settings.
+- **No public copies.** The app's copy of each flier is stored privately in the owner's Google Drive (link sharing off). The page gets each image through the app itself, so no flier sits at a public web address where scrapers could collect it.
+- **Invite-only by default.** New lists start invite-only: without the invite link, the page shows only a lock screen, with no events and no images. Owners can make their list public from the menu if they choose.
+- **No bulk feed.** The JSON feed of all events only works with the owner's private key.
+- **Only what's needed.** Fliers are only kept for events that make the list.
+- **The honest limit.** Anyone who can see the list could still screenshot it, and the original posts live on Instagram and Facebook under those platforms' own policies. What this project controls is that its own copies and its own AI use don't add to that exposure.
+
+### Artists and organizers
+
+Every listing has an **Artist or organizer? Request removal** link. It takes the listing down right away (every date from that post) and logs the request, with an optional message and contact, in the owner's **Removal requests** tab.
+
+### Other privacy
 
 - **No tracking.** No analytics, cookies, or "phone home": nothing about you or your visitors is sent to the author of this project.
-- **No third-party scripts or fonts.** Icons are built into the page and the title font is embedded. Visitors' browsers only talk to Google, which hosts the app and the flier images.
+- **No third-party scripts or fonts.** Icons are built into the page and the title font is embedded. Visitors' browsers only talk to Google, which hosts the app.
 - **What leaves your Google account:** flier images and captions go to Anthropic's Claude API (using your key) to be read. Shared links are fetched by Google's servers to find the flier.
-- **Fliers aren't used to train AI.** Images and captions are sent to Anthropic's Claude API under its commercial terms, which don't use API inputs or outputs to train models unless the API account owner opts in. Anthropic deletes API inputs and outputs within 30 days; content flagged by its automated safety systems can be kept longer. See [API and data retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention) and [how long Anthropic stores data](https://privacy.anthropic.com/en/articles/7996866-how-long-do-you-store-personal-data). If you run a copy, check your own Anthropic Console account's data settings.
-- **Where fliers are stored:** a re-saved copy of each listed event's flier goes in a folder in your Google Drive, shared as a view-only link so the page can show it. Fliers for posts that aren't events, or that fall outside your season, aren't kept.
 - **Names are optional.** The "Your name" field on the add form is only visible in your sheet, never on the public page.
 
 Found a hole? Please report it privately through GitHub's **Security → Report a vulnerability** on this repo rather than a public issue.
@@ -113,7 +137,7 @@ clasp push
 
 Handy endpoints on a deployed page:
 
-- `GET …/exec?format=json` returns the current events as JSON (add `&invite=CODE` when locked)
+- `GET …/exec?format=json&key=<Shortcut key>` returns the current events as JSON (owner only)
 - `POST …/exec` with `{"token": "<Shortcut key>", "url": "…"}` or `{"token": "…", "imageBase64": "…"}` adds an event
 
 ## Contributing
