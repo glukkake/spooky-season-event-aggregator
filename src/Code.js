@@ -472,9 +472,17 @@ function processSubmission_(sub) {
   const giveCredit = sub.credit !== false;
   let author = sub.author || authorFromUrl_(sub.url || '');
   const manual = sub.manual || {};
-  if (url && isKnownLink_(url)) return { ok: true, status: 'duplicate', message: 'Already on the list 👻' };
+  const seen = url ? knownLink_(url) : '';
+  if (seen === 'listed') return { ok: true, status: 'duplicate', message: 'Already on the list 👻' };
+  if (seen === 'skipped') {
+    // Retrying a skipped link: go ahead if they brought something new (a flier or typed-in details).
+    if (sub.imageBase64 || (manual.name && manual.date)) clearSkipped_(url);
+    else return { ok: false, status: 'skipped-before', message: "We've already checked this link and couldn't find event details in it. Upload a screenshot of the flier, or type the details in." };
+  }
 
   let image = null;
+  let firstImageOnly = false; // a shared link only exposes a post's first image
+  const slideTip = () => (firstImageOnly ? " If the flier isn't the first image in the post, upload a screenshot of it." : '');
   let caption = sub.caption || '';
   let title = '';
   if (sub.imageBase64) {
@@ -492,7 +500,7 @@ function processSubmission_(sub) {
     author = author || preview.author;
     caption = caption || preview.description;
     title = preview.title;
-    if (!image && preview.image) image = fetchImage_(preview.image);
+    if (!image && preview.image) { image = fetchImage_(preview.image); firstImageOnly = Boolean(image); }
   }
 
   const hasManual = manual.name && manual.date;
@@ -512,7 +520,7 @@ function processSubmission_(sub) {
   const datedEvent = (extracted.events || []).some((ev) => ev.name && /^\d{4}-\d{2}-\d{2}$/.test(ev.date));
   if (!(extracted.is_event || datedEvent) || !extracted.events.length) {
     logSkipped_(url, 'Not an event', '', '', addedBy, '');
-    return { ok: true, status: 'skipped', message: "That doesn't look like an event, so it went to the Skipped tab." };
+    return { ok: true, status: 'skipped', message: "That doesn't look like an event, so it went to the Skipped tab." + slideTip() };
   }
 
   const kept = [];
@@ -534,7 +542,7 @@ function processSubmission_(sub) {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    if (url && isKnownLink_(url)) return { ok: true, status: 'duplicate', message: 'Already on the list 👻' };
+    if (url && knownLink_(url) === 'listed') return { ok: true, status: 'duplicate', message: 'Already on the list 👻' };
     const credit = !giveCredit ? null : author || (kept[0] && kept[0].host ? { name: kept[0].host, link: '' } : null);
     if (kept.length && !appendEvents_(kept, url, addedBy, flierId, credit)) {
       return { ok: true, status: 'duplicate', message: `Already on the list: ${kept[0].name} 👻` };
@@ -546,7 +554,7 @@ function processSubmission_(sub) {
 
   if (!kept.length) {
     const ev = outside[0];
-    return { ok: true, status: 'skipped', message: `"${ev.name}" ${!ev.date ? 'has no date we could find' : ev.date > CONFIG.SEASON_END ? 'is ' + prettyDate_(ev.date) + ', after the season' : 'was ' + prettyDate_(ev.date) + ', already past'}. Saved to the Skipped tab.` };
+    return { ok: true, status: 'skipped', message: `"${ev.name}" ${!ev.date ? 'has no date we could find' : ev.date > CONFIG.SEASON_END ? 'is ' + prettyDate_(ev.date) + ', after the season' : 'was ' + prettyDate_(ev.date) + ', already past'}. Saved to the Skipped tab.${ev.date ? '' : slideTip()}` };
   }
   const first = kept[0];
   const more = kept.length > 1 ? ` (+${kept.length - 1} more date${kept.length > 2 ? 's' : ''})` : '';
@@ -804,11 +812,17 @@ function logSkipped_(url, reason, name, date, addedBy, flierId) {
     .appendRow([new Date(), cell_(url), cell_(reason), cell_(name), cell_(date), cell_(addedBy), '']);
 }
 
-function isKnownLink_(url) {
+/** 'listed' if the link is on the Events tab, 'skipped' if only on the Skipped tab, else ''. */
+function knownLink_(url) {
   const ss = getSpreadsheet_();
-  const inEvents = columnValues_(ss.getSheetByName(SHEETS.EVENTS), C.Link);
-  const inSkipped = columnValues_(ss.getSheetByName(SHEETS.SKIPPED), 2);
-  return inEvents.includes(url) || inSkipped.includes(url);
+  if (columnValues_(ss.getSheetByName(SHEETS.EVENTS), C.Link).includes(url)) return 'listed';
+  return columnValues_(ss.getSheetByName(SHEETS.SKIPPED), 2).includes(url) ? 'skipped' : '';
+}
+
+function clearSkipped_(url) {
+  const sheet = getSpreadsheet_().getSheetByName(SHEETS.SKIPPED);
+  const links = columnValues_(sheet, 2);
+  for (let i = links.length - 1; i >= 0; i--) if (links[i] === url) sheet.deleteRow(i + 2);
 }
 
 function columnValues_(sheet, col) {

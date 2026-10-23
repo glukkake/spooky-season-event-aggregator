@@ -132,6 +132,12 @@
   .dlg.info h3 { margin: 16px 0 4px; font-size: 1rem; color: var(--accent); }
   .dlg.info p { margin: 0 0 6px; font-size: 14px; }
   .dlg.info .more { margin-top: 14px; }
+  .dlg.result { text-align: center; padding-top: 24px; }
+  .result-icon { font-size: 44px; line-height: 1; margin: 0 0 8px; }
+  .dlg.result h2 { margin: 0 0 8px; }
+  .result-msg { margin: 0 0 8px; font-size: 16px; }
+  .is-ok .dlg.result h2 { color: var(--ok); }
+  .dlg.result .actions { justify-content: center; }
   .site-foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
   .site-foot p { margin: 0; max-width: 70ch; }
   .site-foot a { color: var(--muted); }
@@ -313,6 +319,19 @@
     <p>Want your event or art taken down? Use <strong>Request removal</strong> on the listing and it comes down right away.</p>
     <p class="more"><a href="https://github.com/glukkake/spooky-season-event-aggregator#ai-art-and-privacy" target="_blank" rel="noopener noreferrer">More about privacy and how images are handled<span class="sr-only"> (opens in new tab)</span> ↗</a></p>
     <div class="actions"><button class="btn" type="button" id="aiClose">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="resultDlg" aria-labelledby="resultTitle" aria-describedby="resultMsg">
+  <div class="dlg result">
+    <p class="result-icon" id="resultIcon" aria-hidden="true"></p>
+    <h2 id="resultTitle"></h2>
+    <p class="result-msg" id="resultMsg"></p>
+    <p class="help" id="resultHelp" hidden></p>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="resultDone">Done</button>
+      <button class="btn" type="button" id="resultAgain"></button>
+    </div>
   </div>
 </dialog>
 
@@ -899,16 +918,47 @@
     google.script.run
       .withSuccessHandler((res) => {
         $('submitAdd').disabled = false;
+        status.textContent = ''; status.className = 'status';
         if (res.locked) { $('addDlg').close(); showLocked(); return; }
-        status.className = 'status ' + (res.ok ? 'ok' : 'bad');
-        status.textContent = res.message;
-        if (res.ok) { f.reset(); load(); }
+        showResult(res);
       })
       .withFailureHandler(() => {
         $('submitAdd').disabled = false;
-        status.className = 'status bad'; status.textContent = 'Something went wrong. Try again in a minute.';
+        status.textContent = ''; status.className = 'status';
+        showResult({ ok: false, message: 'Something went wrong on our end. Try again in a minute.' });
       })
       .submitFromPage(data);
+  });
+
+  // The outcome gets its own window (the add form closes first), so it's clear what happened and what's next.
+  let lastResultFailed = false;
+  function showResult(res) {
+    const added = res.ok && res.status === 'added';
+    const dup = res.ok && res.status === 'duplicate';
+    lastResultFailed = !added && !dup;
+    $('addDlg').close();
+    $('resultIcon').textContent = added ? '🎃' : dup ? '👻' : '🦇';
+    $('resultTitle').textContent = added ? 'Event added' : dup ? 'Already on the list' : "We couldn't add this one";
+    $('resultMsg').textContent = String(res.message || '').replace(/^Added:\s*/, '').replace(/\s*[🎃👻]\s*$/u, '');
+    $('resultHelp').hidden = !lastResultFailed;
+    $('resultHelp').textContent = lastResultFailed
+      ? 'You can try again with a screenshot of the flier, or type the details in yourself under "Type in details".' : '';
+    $('resultAgain').textContent = lastResultFailed ? 'Try again' : 'Add another event';
+    $('resultDlg').className = lastResultFailed ? 'is-problem' : 'is-ok';
+    if (!lastResultFailed) { $('addForm').reset(); load(false); }
+    $('resultDlg').showModal();
+    $('resultAgain').focus();
+  }
+  $('resultDone').addEventListener('click', () => {
+    $('resultDlg').close();
+    if (lastResultFailed) $('addForm').reset();
+  });
+  $('resultAgain').addEventListener('click', () => {
+    $('resultDlg').close();
+    // After a problem the form keeps what was entered, with the details section open for typing it in.
+    if (lastResultFailed) document.querySelector('#addForm details').open = true;
+    $('addDlg').showModal();
+    (lastResultFailed ? $('f-img') : $('f-url')).focus();
   });
 
   load();
