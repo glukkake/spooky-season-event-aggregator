@@ -133,6 +133,13 @@
   .dlg.info p { margin: 0 0 6px; font-size: 14px; }
   .dlg.info .more { margin-top: 14px; }
   .dlg.result { text-align: center; padding-top: 24px; }
+  .actions[hidden], .fix[hidden] { display: none; }
+  .is-fix .dlg.result { text-align: left; }
+  .is-fix .result-icon, .is-fix .dlg.result h2 { text-align: center; }
+  .flier-ok { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; color: var(--ok); font-weight: 600; }
+  .flier-ok img { width: 48px; height: 60px; object-fit: cover; border-radius: var(--control-radius); border: 1px solid var(--line); }
+  .missing { margin-left: 6px; padding: 1px 6px; border-radius: var(--control-radius); background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); font-size: 12px; font-weight: 700; }
+  .fix input[aria-invalid="true"] { border-color: var(--bad); }
   .result-icon { font-size: 44px; line-height: 1; margin: 0 0 8px; }
   .dlg.result h2 { margin: 0 0 8px; }
   .result-msg { margin: 0 0 8px; font-size: 16px; }
@@ -328,10 +335,36 @@
     <h2 id="resultTitle"></h2>
     <p class="result-msg" id="resultMsg"></p>
     <p class="help" id="resultHelp" hidden></p>
-    <div class="actions">
+    <div class="actions" id="resultActions">
       <button class="btn secondary" type="button" id="resultDone">Done</button>
       <button class="btn" type="button" id="resultAgain"></button>
     </div>
+    <form id="fixForm" class="fix" hidden novalidate>
+      <p class="flier-ok" id="fixFlier" hidden><img id="fixThumb" alt=""> <span>✓ Flier received</span></p>
+      <label for="x-name">Event name <span class="missing" data-for="name" hidden>Missing</span></label>
+      <input id="x-name" name="name" maxlength="120">
+      <div class="two">
+        <div><label for="x-date">Date <span class="missing" data-for="date" hidden>Missing</span></label><input id="x-date" name="date" type="date"></div>
+        <div><label for="x-time">Time</label><input id="x-time" name="time" maxlength="40" placeholder="7pm – 11pm"></div>
+      </div>
+      <label for="x-through">Runs through <span class="opt">(only for multi-day runs)</span></label>
+      <input id="x-through" name="runsThrough" type="date">
+      <label for="x-venue">Venue</label>
+      <input id="x-venue" name="venue" maxlength="120">
+      <div class="two">
+        <div><label for="x-price">Price</label><input id="x-price" name="price" maxlength="80" placeholder="Unknown"></div>
+        <div><label for="x-type">Type</label>
+          <select id="x-type" name="type"><option value="">Other</option><? config.types.forEach(function (t) { ?><option><?= t ?></option><? }); ?></select></div>
+      </div>
+      <label for="x-desc">What is it? <span class="opt">(one line)</span></label>
+      <textarea id="x-desc" name="description" maxlength="300"></textarea>
+      <label class="check" for="x-spooky"><input id="x-spooky" name="spooky" type="checkbox" checked> 🎃 Halloween-themed</label>
+      <p class="status bad" id="fixStatus" role="status"></p>
+      <div class="actions">
+        <button class="btn secondary" type="button" id="fixCancel">Cancel</button>
+        <button class="btn" type="submit" id="fixSave">Add event</button>
+      </div>
+    </form>
   </div>
 </dialog>
 
@@ -915,6 +948,7 @@
       status.className = 'status bad'; status.textContent = 'Couldn\'t read that image. Try a screenshot (JPG or PNG).';
       $('submitAdd').disabled = false; return;
     }
+    lastSubmission = Object.assign({}, data);
     google.script.run
       .withSuccessHandler((res) => {
         $('submitAdd').disabled = false;
@@ -932,7 +966,13 @@
 
   // The outcome gets its own window (the add form closes first), so it's clear what happened and what's next.
   let lastResultFailed = false;
+  let lastSubmission = null;
   function showResult(res) {
+    const fixing = res.status === 'needs-details';
+    $('fixForm').hidden = !fixing;
+    $('resultActions').hidden = fixing;
+    $('resultDlg').classList.toggle('is-fix', fixing);
+    if (fixing) { showFix(res); return; }
     const added = res.ok && res.status === 'added';
     const dup = res.ok && res.status === 'duplicate';
     lastResultFailed = !added && !dup;
@@ -949,6 +989,57 @@
     $('resultDlg').showModal();
     $('resultAgain').focus();
   }
+  // "Almost there": what we could read, pre-filled, with the missing pieces marked.
+  function showFix(res) {
+    $('addDlg').close();
+    lastResultFailed = true;
+    $('resultIcon').textContent = '✍️';
+    $('resultTitle').textContent = 'Almost there';
+    $('resultMsg').textContent = res.message || "Fill in what's missing:";
+    $('resultHelp').hidden = true;
+    const f = $('fixForm');
+    const d = res.draft || {};
+    f.name.value = d.name || ''; f.date.value = d.date || ''; f.time.value = d.time || ''; f.runsThrough.value = d.runsThrough || '';
+    f.venue.value = d.venue || ''; f.price.value = /^unknown$/i.test(d.price || '') ? '' : (d.price || '');
+    f.type.value = d.type || ''; f.description.value = d.description || ''; f.spooky.checked = d.spooky !== false;
+    const missing = res.missing || [];
+    f.querySelectorAll('.missing').forEach((m) => {
+      const on = missing.includes(m.dataset.for);
+      m.hidden = !on;
+      f[m.dataset.for].setAttribute('aria-invalid', on ? 'true' : 'false');
+    });
+    const file = $('f-img').files[0];
+    $('fixFlier').hidden = !(res.flierReceived && file);
+    if (res.flierReceived && file) $('fixThumb').src = URL.createObjectURL(file);
+    $('fixStatus').textContent = '';
+    $('fixSave').disabled = false;
+    $('resultDlg').showModal();
+    (missing.length ? f[missing[0]] : $('fixSave')).focus();
+  }
+  $('fixCancel').addEventListener('click', () => { $('resultDlg').close(); $('addForm').reset(); });
+  $('fixForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const f = $('fixForm');
+    if (!f.name.value.trim() || !f.date.value) {
+      $('fixStatus').textContent = 'Add at least the event name and date.';
+      (f.name.value.trim() ? f.date : f.name).focus();
+      return;
+    }
+    const typed = Object.fromEntries(new FormData(f).entries());
+    typed.spooky = f.spooky.checked;
+    const data = Object.assign({}, lastSubmission || {}, typed, { useTypedDetails: true });
+    $('fixSave').disabled = true;
+    $('fixStatus').className = 'status'; $('fixStatus').textContent = 'Adding…';
+    google.script.run
+      .withSuccessHandler((res) => {
+        $('fixSave').disabled = false; $('fixStatus').className = 'status bad'; $('fixStatus').textContent = '';
+        $('resultDlg').close();
+        showResult(res);
+      })
+      .withFailureHandler(() => { $('fixSave').disabled = false; $('fixStatus').className = 'status bad'; $('fixStatus').textContent = 'Something went wrong. Try again.'; })
+      .submitFromPage(data);
+  });
+
   $('resultDone').addEventListener('click', () => {
     $('resultDlg').close();
     if (lastResultFailed) $('addForm').reset();

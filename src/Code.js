@@ -339,13 +339,16 @@ function submitFromPage(form) {
   const manual = {
     name: clip_(form.name, 120), date: clip_(form.date, 10), time: clip_(form.time, 40),
     venue: clip_(form.venue, 120), type: clip_(form.type, 40), description: clip_(form.description, 300),
-    runsThrough: clip_(form.runsThrough, 10),
+    runsThrough: clip_(form.runsThrough, 10), price: clip_(form.price, 80),
+    spooky: form.spooky === undefined ? undefined : form.spooky === true || form.spooky === 'on',
   };
   try {
     return processSubmission_({
       url: clip_(form.url, 500),
       imageBase64: form.imageBase64,
       manual,
+      interactive: true, // a person is waiting: offer "fill in what's missing" instead of skipping
+      useTypedDetails: form.useTypedDetails === true, // completing a draft: no second AI pass
       credit: form.credit !== 'off',
       addedBy: clip_(form.addedBy, 60) || 'web form',
     });
@@ -507,6 +510,13 @@ function processSubmission_(sub) {
   }
 
   const hasManual = manual.name && manual.date;
+  // Completing a draft from the page: the person typed the details, so use them as-is.
+  const typedOnly = sub.useTypedDetails && hasManual;
+  if (sub.interactive && !typedOnly && !image && !caption && !hasManual) {
+    return needsDetails_({}, blocked
+      ? "Instagram didn't let us see this post just now. Add the details below, or try again in a minute."
+      : "We couldn't open that link. Add the details below, or upload a screenshot of the flier.", false);
+  }
   if (blocked && !image && !caption && !hasManual) {
     // Not logged as skipped, so trying again with the same link still works.
     return { ok: false, status: 'blocked', message: "Instagram didn't let us see this post just now. Try again in a minute, or upload a screenshot of the flier." };
@@ -516,7 +526,7 @@ function processSubmission_(sub) {
   }
 
   let extracted;
-  if (hasManual && !image && !caption) {
+  if (typedOnly || (hasManual && !image && !caption)) {
     extracted = { is_event: true, events: [manualToEvent_(manual)] };
   } else {
     extracted = extractEvents_({ image, caption, title, url, note: sub.note, postedAt: sub.postedAt, manual });
@@ -525,6 +535,9 @@ function processSubmission_(sub) {
   const addedBy = sub.addedBy || 'shortcut';
   // Safety net: a named event with a real date counts, even if the model said "not an event".
   const datedEvent = (extracted.events || []).some((ev) => ev.name && /^\d{4}-\d{2}-\d{2}$/.test(ev.date));
+  if (sub.interactive && (!(extracted.is_event || datedEvent) || !extracted.events.length)) {
+    return needsDetails_((extracted.events || [])[0] || {}, "We couldn't find all the event details in this post. Fill in what's missing:" + slideTip(), Boolean(image));
+  }
   if (!(extracted.is_event || datedEvent) || !extracted.events.length) {
     logSkipped_(url, 'Not an event', '', '', addedBy, '');
     return { ok: true, status: 'skipped', message: "That doesn't look like an event, so it went to the Skipped tab." + slideTip() };
@@ -543,6 +556,13 @@ function processSubmission_(sub) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(ev.date) && (ev.end_date || ev.date) >= CONFIG.KEEP_FROM && ev.date <= CONFIG.SEASON_END) kept.push(ev);
     else outside.push(ev);
   });
+
+  if (sub.interactive && !kept.length && outside.length) {
+    const ev = outside[0];
+    return needsDetails_(ev, !ev.date
+      ? "We couldn't find the date. Fill in what's missing:" + slideTip()
+      : `The date we read is ${prettyDate_(ev.date)}, which is outside this list's season. If that's wrong, fix it below:`, Boolean(image));
+  }
 
   // Fliers are stored (re-encoded) only for events that make the list.
   const flierId = image && kept.length ? saveFlier_(image) : '';
@@ -883,11 +903,11 @@ function isLoginWall_(html) {
 
 function fetchPreview_(url) {
   const out = { title: '', description: '', image: '', author: authorFromUrl_(url), blocked: false };
-  let html = fetchHtml_(url, true);
-  // The login page comes and goes, so try a few times before giving up.
-  for (let tries = 1; html && isLoginWall_(html) && tries < 4; tries++) {
-    Utilities.sleep(1200 * tries);
-    html = fetchHtml_(url, true);
+  let html = fetchHtml_(url, true, 0);
+  // The login page comes and goes, so try a few times (rotating identities) before giving up.
+  for (let tries = 1; html && isLoginWall_(html) && tries < 6; tries++) {
+    Utilities.sleep(700 * tries);
+    html = fetchHtml_(url, true, tries);
   }
   if (html && isLoginWall_(html)) { out.blocked = true; return out; }
   if (!html) return out;
@@ -920,14 +940,23 @@ function authorFromUrl_(url) {
   return null;
 }
 
-function fetchHtml_(url, asCrawler) {
+// Link-preview identities Instagram serves post previews to. It throttles each differently,
+// so retries rotate through them (Twitter's got through most often in testing).
+const PREVIEW_AGENTS = [
+  'Twitterbot/1.0',
+  'WhatsApp/2.23.20.0',
+  'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+  'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)',
+];
+
+function fetchHtml_(url, asCrawler, attempt) {
   try {
     const res = UrlFetchApp.fetch(url, {
       muteHttpExceptions: true,
       followRedirects: true,
       headers: {
         'User-Agent': asCrawler
-          ? 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
+          ? PREVIEW_AGENTS[(attempt || 0) % PREVIEW_AGENTS.length]
           : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
       },
@@ -1140,7 +1169,32 @@ function extractEvents_({ image, caption, title, url, note, postedAt, manual }) 
   return parsed;
 }
 
+/**
+ * For the page: what we could read, so the person only fills in the gaps.
+ * Nothing is saved yet; the page sends the completed details back with the same link/flier.
+ */
+function needsDetails_(ev, message, flierReceived) {
+  const draft = {
+    name: String(ev.name || ''), date: /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || '')) ? ev.date : '',
+    time: [validTime_(ev.start_time), validTime_(ev.end_time)].filter(Boolean).map(prettyTime_).join(' – '),
+    runsThrough: ev.date ? validRunEnd_(ev.date, String(ev.end_date || '')) : '',
+    venue: String(ev.venue || ''), price: String(ev.price || ''),
+    type: CONFIG.TYPES.includes(ev.type) ? ev.type : '', description: String(ev.description || ''),
+    spooky: ev.spooky !== false,
+  };
+  const missing = ['name', 'date'].filter((k) => !draft[k]);
+  return { ok: false, status: 'needs-details', message, draft, missing, flierReceived };
+}
+
 function manualToEvent_(m) {
+  // "7pm – 11pm" style ranges first; otherwise read a single start time.
+  const [from, to] = String(m.time || '').split(/\s*[–-]\s*|\s+to\s+/i);
+  if (to24_(from)) {
+    return {
+      name: m.name, date: m.date, start_time: to24_(from), end_time: to24_(to), venue: m.venue || '', price: m.price || '', ntaflof: false, host: '', end_date: '',
+      type: CONFIG.TYPES.includes(m.type) ? m.type : 'Other', spooky: m.spooky !== false, description: m.description || '',
+    };
+  }
   const t = String(m.time || '').match(/(\d{1,2})(?::(\d{2}))?\s*([ap])?/i);
   let start = '';
   if (t) {
@@ -1152,8 +1206,8 @@ function manualToEvent_(m) {
     start = `${String(h).padStart(2, '0')}:${t[2] || '00'}`;
   }
   return {
-    name: m.name, date: m.date, start_time: start, end_time: '', venue: m.venue || '', price: '', ntaflof: false, host: '', end_date: '',
-    type: CONFIG.TYPES.includes(m.type) ? m.type : 'Other', spooky: true, description: m.description || '',
+    name: m.name, date: m.date, start_time: start, end_time: '', venue: m.venue || '', price: m.price || '', ntaflof: false, host: '', end_date: '',
+    type: CONFIG.TYPES.includes(m.type) ? m.type : 'Other', spooky: m.spooky !== false, description: m.description || '',
   };
 }
 
