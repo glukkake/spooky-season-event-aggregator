@@ -24,8 +24,9 @@ const CONFIG = {
   // Script Properties, created by setup. The Shortcut key stops random people POSTing to the endpoint.
   get SUBMIT_TOKEN() { return PropertiesService.getScriptProperties().getProperty('SUBMIT_TOKEN') || ''; },
   get PAGE_URL() { return PropertiesService.getScriptProperties().getProperty('PAGE_URL') || ''; },
-  // Smallest Claude model: plenty for reading flier text, and the least computing per request.
-  MODEL: 'claude-haiku-5-5',
+  // Mid-size Claude model. Haiku (the smallest) missed second events in multi-event posts and
+  // misjudged some ticketed "private" parties, so Sonnet balances reading quality and computing.
+  MODEL: 'claude-sonnet-5-5',
   FOLDER_NAME: 'Spooky season fliers',
   // Public form limits, so spam can't run up the Claude bill or flood the list.
   PUBLIC_PER_HOUR: 30,
@@ -495,8 +496,10 @@ function processSubmission_(sub) {
   } else if (sub.imageUrl) {
     image = fetchImage_(sub.imageUrl);
   }
+  let blocked = false;
   if (url && (!image || !caption || (giveCredit && !author))) {
     const preview = fetchPreview_(url);
+    blocked = preview.blocked;
     author = author || preview.author;
     caption = caption || preview.description;
     title = preview.title;
@@ -504,6 +507,10 @@ function processSubmission_(sub) {
   }
 
   const hasManual = manual.name && manual.date;
+  if (blocked && !image && !caption && !hasManual) {
+    // Not logged as skipped, so trying again with the same link still works.
+    return { ok: false, status: 'blocked', message: "Instagram didn't let us see this post just now. Try again in a minute, or upload a screenshot of the flier." };
+  }
   if (!image && !caption && !hasManual) {
     return { ok: false, status: 'unreadable', message: "Couldn't open that link (it may be private). Share a screenshot of the flier instead." };
   }
@@ -566,7 +573,7 @@ function appendEvents_(events, url, addedBy, flierId, credit) {
   const sheet = getSpreadsheet_().getSheetByName(SHEETS.EVENTS);
   const now = new Date();
   const existing = readEventRows_(sheet).filter((r) => r.status !== 'hidden');
-  events = events.filter((ev) => !existing.some((r) => r.date === ev.date && sameEvent_(r.name, ev.name)));
+  events = events.filter((ev) => !existing.some((r) => r.date === ev.date && likelySame_(r, ev)));
   if (!events.length) return 0;
   const rows = events.map((ev) => {
     const row = new Array(EVENT_COLS.length).fill('');
@@ -623,6 +630,29 @@ function sameEvent_(a, b) {
   let shared = 0;
   ta.forEach((w) => { if (tb.has(w)) shared++; });
   return shared / Math.min(ta.size, tb.size) >= 0.6;
+}
+
+const VENUE_NOISE = new Set(['the', 'at', 'of', 'and', 'in', 'on', 'new', 'orleans', 'nola', 'la', 'louisiana', 'st', 'street', 'ave', 'avenue', 'blvd', 'rd', 'road', 'dr', 'upstairs', 'downstairs', 'room', 'hall']);
+
+/**
+ * Is this the same event listed twice? Similar names at the same place (a parade and a market
+ * on the same day can share words). If a venue is missing, the names must match much more closely.
+ */
+function likelySame_(a, b) {
+  if (!sameEvent_(a.name, b.name)) return false;
+  const tokens = (v) => new Set(String(v).toLowerCase().normalize('NFKD').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
+    .filter((w) => w.length > 2 && !/^\d+$/.test(w) && !VENUE_NOISE.has(w)));
+  const va = tokens(a.venue);
+  const vb = tokens(b.venue);
+  if (va.size && vb.size) {
+    for (const w of va) if (vb.has(w)) return true;
+    return false;
+  }
+  const na = nameTokens_(a.name);
+  const nb = nameTokens_(b.name);
+  let shared = 0;
+  na.forEach((w) => { if (nb.has(w)) shared++; });
+  return shared / (na.size + nb.size - shared) >= 0.5;
 }
 
 function readEventRows_(sheet) {
@@ -691,7 +721,7 @@ function cleanUp_() {
   const live = rows.filter((r) => !isOffPage_(r.status) && r.name);
   live.forEach((r, i) => {
     // Two listings from the same post are separate events (a show and its after-party), never duplicates.
-    const dupOf = live.slice(0, i).find((o) => !o.dupe && o.date === r.date && !(o.link && o.link === r.link) && sameEvent_(o.name, r.name));
+    const dupOf = live.slice(0, i).find((o) => !o.dupe && o.date === r.date && !(o.link && o.link === r.link) && likelySame_(o, r));
     if (!dupOf) return;
     // Keep whichever listing has more detail.
     const loser = (r.venue && !dupOf.venue) ? dupOf : r;
@@ -844,9 +874,22 @@ function cleanUrl_(raw) {
 }
 
 /** Best-effort title/caption/image/author from a public link. Instagram and Facebook often refuse; that's expected. */
+/** Instagram sometimes answers with its "Create an account or log in" page instead of the post. */
+function isLoginWall_(html) {
+  const title = meta_(html, 'og:title');
+  const desc = meta_(html, 'og:description') || meta_(html, 'description');
+  return /^Instagram$/i.test(title.trim()) || /^Create an account or log in/i.test(desc) || /\/rsrc\.php\//.test(meta_(html, 'og:image'));
+}
+
 function fetchPreview_(url) {
-  const out = { title: '', description: '', image: '', author: authorFromUrl_(url) };
-  const html = fetchHtml_(url, true);
+  const out = { title: '', description: '', image: '', author: authorFromUrl_(url), blocked: false };
+  let html = fetchHtml_(url, true);
+  // The login page comes and goes, so try a few times before giving up.
+  for (let tries = 1; html && isLoginWall_(html) && tries < 4; tries++) {
+    Utilities.sleep(1200 * tries);
+    html = fetchHtml_(url, true);
+  }
+  if (html && isLoginWall_(html)) { out.blocked = true; return out; }
   if (!html) return out;
   out.title = meta_(html, 'og:title');
   out.description = meta_(html, 'og:description') || meta_(html, 'description');

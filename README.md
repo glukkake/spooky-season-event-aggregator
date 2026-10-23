@@ -59,6 +59,8 @@ Your Claude key, the Shortcut key and your page link are stored in the script's 
 | **Your iPhone** | Share any post or screenshot to the [iPhone Shortcut](docs/iphone-shortcut.md) |
 | **The sheet** | Paste links into the **Add links here** tab (anyone you give edit access can do this) |
 
+**If a link gets "not an event" or "Instagram didn't let us see this post":** Instagram sometimes answers the app with its "Create an account or log in" page instead of the post. The app now retries a few times, and if Instagram still won't show the post it asks you to try again or upload a screenshot (it doesn't file it under Skipped). This, not the AI model, was behind a run of fliers that "couldn't be read". Carousel posts have a similar limit: a shared link only exposes the first image, so if the flier is a later slide, upload a screenshot of it.
+
 Instagram and Facebook often won't show a post's caption to outside servers. A shared link usually still gets the flier image. Uploading a screenshot always works best.
 
 ## Running the list
@@ -91,7 +93,7 @@ Contributors raised good questions about how this app uses AI, what happens to t
 
 - **It only reads.** When an event is added, Claude (an AI model made by Anthropic) reads the words on the flier and post (the event name, date, time, venue and price) and fills in the listing. That is the only thing AI does in this app.
 - **It never makes or changes art.** No images are generated, edited or restyled. The fliers shown are the original art, credited and linked to whoever posted them.
-- **The smallest model.** Fliers are read with Claude Haiku, the smallest and most efficient Claude model.
+- **A mid-size model.** Fliers are read with Claude Sonnet, a mid-size Claude model. For a while the app used Claude Haiku, the smallest model, to use as little computing as possible, but it missed details people noticed: from a post announcing a show and its after-party it listed only the show, and it treated a ticketed party described as "private" as not an event. Sonnet reads fliers more reliably while still using much less computing than the largest model.
 - **Browsing uses no AI.** Each flier is read once, when its event is added, as one short request. Anthropic doesn't publish energy figures for individual requests, so there's no exact number to share.
 - **It's explained in the app too.** A **How AI is used here** panel is linked from the add form and the page footer.
 
