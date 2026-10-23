@@ -967,6 +967,7 @@
   // The outcome gets its own window (the add form closes first), so it's clear what happened and what's next.
   let lastResultFailed = false;
   let lastSubmission = null;
+  let draftPass = ''; // from the server: lets the fix-up form finish this same draft
   function showResult(res) {
     const fixing = res.status === 'needs-details';
     $('fixForm').hidden = !fixing;
@@ -999,6 +1000,7 @@
     $('resultHelp').hidden = true;
     const f = $('fixForm');
     const d = res.draft || {};
+    draftPass = res.pass || '';
     f.name.value = d.name || ''; f.date.value = d.date || ''; f.time.value = d.time || ''; f.runsThrough.value = d.runsThrough || '';
     f.venue.value = d.venue || ''; f.price.value = /^unknown$/i.test(d.price || '') ? '' : (d.price || '');
     f.type.value = d.type || ''; f.description.value = d.description || ''; f.spooky.checked = d.spooky !== false;
@@ -1027,7 +1029,7 @@
     }
     const typed = Object.fromEntries(new FormData(f).entries());
     typed.spooky = f.spooky.checked;
-    const data = Object.assign({}, lastSubmission || {}, typed, { useTypedDetails: true });
+    const data = Object.assign({}, lastSubmission || {}, typed, { useTypedDetails: true, draftPass });
     $('fixSave').disabled = true;
     $('fixStatus').className = 'status'; $('fixStatus').textContent = 'Adding…';
     google.script.run

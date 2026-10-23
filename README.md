@@ -72,7 +72,7 @@ Everything is in the **🎃 Events** menu and the sheet itself:
 - **Edited a time?** Run **Tidy up** so it re-sorts.
 - **Invite-only:** **🔒 Lock page** gives you an invite link. **🔁 New invite link** cuts off the old one. **🔓 Unlock page** makes it public again.
 - **Skipped tab:** posts that weren't events, or were dated before your season, land here so nothing is silently lost.
-- **Removal requests tab:** when an artist or organizer takes a listing down, it's logged here and the event's Status becomes `removal requested`. Set it back to `live` if it was a mistake.
+- **Removal requests tab:** when an artist or organizer takes a listing down, it's logged here and the event's Status becomes `removal requested`. Set it back to `live` if it was a mistake. The first 10 requests a day take effect right away; after that (say, someone working through the whole list), requests are still logged but marked as waiting for you, and the listing stays up until you set its Status to `hidden`.
 
 ## Security
 
@@ -81,7 +81,9 @@ The page runs as you, so it was built defensively:
 - Anonymous visitors can only read the list and submit events. Owner-only menu actions check that it's really you.
 - Text from posts can't become spreadsheet formulas, so no one can use `=IMPORTDATA(...)` tricks to leak your sheet.
 - Uploads must be real JPG/PNG/GIF/WebP images under 4 MB, and every stored flier is re-encoded, so nothing hidden inside an image is kept.
-- The public form is rate limited (30 an hour, 120 a day) so spam can't run up your Claude bill.
+- The public form is rate limited (30 an hour, 120 a day) so spam can't run up your Claude bill. Removal requests and flier loading have their own limits, so they can't use up the form's allowance or Google's daily quota.
+- When an add needs a few details filled in ("Almost there"), the person's typed details are only accepted for that same link and flier, using a one-time pass from the server, so the form can't be used to post an arbitrary image without it being read first.
+- Credit on a listing comes from what the post itself shows, never from how someone typed the link, so nobody can put an artist's name on a listing they didn't post.
 - Claude is told that posts are untrusted data and can only return event details, and its answers are checked (times, dates, types) before anything is saved.
 - Cards only ever link to `http(s)` URLs, and nothing from a link's address is ever run as code on the page.
 
@@ -108,7 +110,7 @@ Contributors raised good questions about how this app uses AI, what happens to t
 
 ### Artists and organizers
 
-Every listing has an **Artist or organizer? Request removal** link. It takes the listing down right away (every date from that post) and logs the request, with an optional message and contact, in the owner's **Removal requests** tab.
+Every listing has an **Artist or organizer? Request removal** link. It takes the listing down right away (every date from that post) and logs the request, with an optional message and contact, in the owner's **Removal requests** tab. Its flier stops loading at the same moment. To stop one person from emptying the whole list, only the first 10 requests a day are instant; later ones wait for the owner.
 
 ### Other privacy
 

